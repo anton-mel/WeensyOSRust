@@ -39,11 +39,21 @@ else
 	ccend:=""
 endif
 
+# If you are working locally, set to 0 to disable
+# If you are using node.zoo.cs.edu, set 1 to enable
+USE_HOST_LOCK ?= 0
+
 # locked img error messages
 # messages to display if another instance of QEMU is running
 errbef:="$(ccred)Error, could not obtain lock. Are you running a session in - $(ccgreen)"
 erraft:="$(ccred)If so try running $(ccgreen)make kill-lock$(ccred),\
 		otherwise $(ccyellow)ssh in manually and run make kill$(ccend)" 
+
+# 'HOST_FILE' will contain the hostname of the machine running $(QEMU)
+# This allows us to kill process in remote machine if needed
+# 'HOST_LOCK' is the name of the lockfile
+HOST_FILE='.hosts.txt'
+HOST_LOCK='.hosts.lock'
 
 ifeq ($(V),1)
 compile = $(CC) $(CPPFLAGS) $(CFLAGS) $(DEPCFLAGS) $(1)
@@ -134,23 +144,63 @@ run-qemu-%: run-$(QEMUDISPLAY)-%
 	@:
 
 run-graphic-%: %.img check-qemu
+	@if [ "$(USE_HOST_LOCK)" -eq 1 ]; then \
+	    lockfile -r 0 ./$(HOST_LOCK) || (echo ${errbef} && cat $(HOST_FILE); echo ${erraft}; exit 1); \
+	    hostname > $(HOST_FILE); \
+	fi
 	$(call run,$(QEMU_PRELOAD) $(QEMU) $(QEMUOPT) $(QEMUIMG),QEMU $<)
+	@if [ "$(USE_HOST_LOCK)" -eq 1 ]; then \
+	    rm -f ./$(HOST_FILE); \
+	    rm -f ./$(HOST_LOCK); \
+	fi
 
 run-console-%: %.img check-qemu
+	@if [ "$(USE_HOST_LOCK)" -eq 1 ]; then \
+	    lockfile -r 0 ./$(HOST_LOCK) || (echo ${errbef} && cat $(HOST_FILE); echo ${erraft}; exit 1); \
+	    hostname > $(HOST_FILE); \
+	fi
 	$(call run,$(QEMU_PRELOAD) $(QEMU) $(QEMUOPT) -display curses $(QEMUIMG),QEMU $<)
+	@if [ "$(USE_HOST_LOCK)" -eq 1 ]; then \
+	    rm -f ./$(HOST_FILE); \
+	    rm -f ./$(HOST_LOCK); \
+	fi
 
 run-monitor-%: %.img check-qemu
+	@if [ "$(USE_HOST_LOCK)" -eq 1 ]; then \
+	    lockfile -r 0 ./$(HOST_LOCK) || (echo ${errbef} && cat $(HOST_FILE); echo ${erraft}; exit 1); \
+	    hostname > $(HOST_FILE); \
+	fi
 	$(call run,$(QEMU_PRELOAD) $(QEMU) $(QEMUOPT) -monitor stdio $(QEMUIMG),QEMU $<)
+	@if [ "$(USE_HOST_LOCK)" -eq 1 ]; then \
+	    rm -f ./$(HOST_FILE); \
+	    rm -f ./$(HOST_LOCK); \
+	fi
 
 run-gdb-%: run-gdb-$(QEMUDISPLAY)-%
 	@:
 
 run-gdb-graphic-%: %.img check-qemu
+	@if [ "$(USE_HOST_LOCK)" -eq 1 ]; then \
+	    lockfile -r 0 ./$(HOST_LOCK) || (echo ${errbef} && cat $(HOST_FILE); echo ${erraft}; exit 1); \
+	    hostname > $(HOST_FILE); \
+	fi
 	$(call run,$(QEMU_PRELOAD) $(QEMU) $(QEMUOPT) -gdb tcp::1234 $(QEMUIMG) &,QEMU $<)
 	$(call run,sleep 0.5; gdb -x .gdbinit,GDB)
+	@if [ "$(USE_HOST_LOCK)" -eq 1 ]; then \
+	    rm -f ./$(HOST_FILE); \
+	    rm -f ./$(HOST_LOCK); \
+	fi
 
 run-gdb-console-%: %.img check-qemu
+	@if [ "$(USE_HOST_LOCK)" -eq 1 ]; then \
+	    lockfile -r 0 ./$(HOST_LOCK) || (echo ${errbef} && cat $(HOST_FILE); echo ${erraft}; exit 1); \
+	    hostname > $(HOST_FILE); \
+	fi
 	$(call run,$(QEMU_PRELOAD) $(QEMU) $(QEMUOPT) -display curses -gdb tcp::1234 $(QEMUIMG),QEMU $<)
+	@if [ "$(USE_HOST_LOCK)" -eq 1 ]; then \
+	    rm -f ./$(HOST_FILE); \
+	    rm -f ./$(HOST_LOCK); \
+	fi
 
 run: run-qemu-$(basename $(IMAGE))
 run-qemu: run-qemu-$(basename $(IMAGE))
@@ -177,3 +227,11 @@ restore:
 kill:
 	-killall -u $$(whoami) $(QEMU)
 	@sleep 0.2; if ps -U $$(whoami) | grep $(QEMU) >/dev/null; then killall -9 -u $$(whoami) $(QEMU); fi
+
+.PHONY:
+kill-lock:
+	HOST=$$(cat $(HOST_FILE));HOST_CMD=hostname; if [ "$$HOST" == "$$HOST_CMD" ]; then make kill; else echo $$HOST;CWD=$$(pwd);ssh $$HOST "cd $$CWD;make kill;" && make clean-secret;fi
+
+.PHONY:
+clean-secret:
+	rm -f $(HOST_LOCK) $(HOST_FILE)
