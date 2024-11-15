@@ -1,0 +1,21 @@
+[package]
+name = "kernel-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bindgen = "0.70.1"
+
+[build-dependencies]
+bindgen = "0.70.1"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.dev]
+panic = "abort"
+opt-level = 2
+debug = true
+[profile.release]
+panic = "abort"
+opt-level = 3

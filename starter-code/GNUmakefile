@@ -11,8 +11,15 @@ TEST_DIR = ./tests/
 
 # DIRECTORIES for each part of the system
 KERN_DIR  = ./kernel
+KERN_RUST_DIR = ./kernel-rust
 PROC_DIR = ./uspace
 SHARED_DIR = ./shared
+
+# Rust supports foreign function interface (FFI)
+# and can generate compiled object files (.o)
+# that could be linked with C code.
+RUST_TARGET = x86_64-unknown-linux-gnu
+RUSTFLAGS = -C opt-level=3
 
 # '$(V)' controls whether the lab makefiles print verbose commands (the
 # actual shell commands run by Make), as well as the "overview" commands
@@ -68,12 +75,13 @@ cpy = @/bin/echo " " $(shell cat $(1) > ./$(PROC_DIR)/$(TEST_FILE))
 endif
 
 
-# Object sets
+# C Object sets
 
 BOOT_OBJS = $(OBJDIR)/bootstart.o $(OBJDIR)/boot.o
 
 KERNEL_OBJS = $(OBJDIR)/k-exception.o $(OBJDIR)/kernel.o \
-	$(OBJDIR)/k-hardware.o $(OBJDIR)/vm.o $(OBJDIR)/k-loader.o
+              $(OBJDIR)/k-hardware.o $(OBJDIR)/vm.o \
+              $(OBJDIR)/k-loader.o
 KERNEL_LINKER_FILES = link/kernel.ld link/shared.ld
 
 PROCESS_BINARIES = $(OBJDIR)/p-allocator $(OBJDIR)/p-allocator2 \
@@ -86,6 +94,12 @@ PROCESS_OBJS = $(OBJDIR)/p-allocator.o $(OBJDIR)/p-fork.o \
 	$(OBJDIR)/p-forkexit.o $(OBJDIR)/p-test.o 
 PROCESS_LINKER_FILES = link/process.ld link/shared.ld
 
+# Rust Object sets
+
+generate-bindings:
+	@echo "  GENERATING Rust bindings..."
+	@cd $(KERN_RUST_DIR) && cargo build --release --target $(RUST_TARGET)
+	
 
 # Generic rules for making object files
 
@@ -133,7 +147,7 @@ $(OBJDIR)/bootsector: $(BOOT_OBJS) link/boot.ld link/shared.ld
 $(OBJDIR)/mkbootdisk: build/mkbootdisk.c $(BUILDSTAMPS)
 	$(call run,$(HOSTCC) -I./$(SHARED_DIR) -o $(OBJDIR)/mkbootdisk,HOSTCOMPILE,build/mkbootdisk.c)
 
-weensyos.img: $(OBJDIR)/mkbootdisk $(OBJDIR)/bootsector $(OBJDIR)/kernel
+weensyos.img: $(OBJDIR)/mkbootdisk $(OBJDIR)/bootsector generate-bindings $(OBJDIR)/kernel
 	$(call run,$(OBJDIR)/mkbootdisk $(OBJDIR)/bootsector $(OBJDIR)/kernel > $@,CREATE $@)
 
 

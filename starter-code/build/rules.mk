@@ -90,8 +90,12 @@ check-qemu: $(QEMU_PRELOAD_LIBRARY)
 	else :; fi
 
 # Delete the build
-clean:
+clean: cleanrust
 	$(call run,rm -rf $(DEPSDIR) $(OBJDIR) *.img core *.core,CLEAN)
+
+cleanrust:
+	@echo "Cleaning Rust Files..."
+	@cd $(KERN_RUST_DIR) && cargo clean
 
 realclean: clean
 	$(call run,rm -rf $(DISTDIR)-$(USER).tar.gz $(DISTDIR)-$(USER))

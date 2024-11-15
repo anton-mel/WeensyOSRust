@@ -7,8 +7,6 @@
 //
 //    Load a weensy application into memory from a RAM image.
 
-#define SECTORSIZE              512
-
 extern uint8_t _binary_obj_p_allocator_start[];
 extern uint8_t _binary_obj_p_allocator_end[];
 extern uint8_t _binary_obj_p_allocator2_start[];

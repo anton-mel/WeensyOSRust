@@ -411,13 +411,13 @@ typedef struct __attribute__((packed, aligned(2))) x86_64_pseudodescriptor {
 } x86_64_pseudodescriptor;
 
 // Task state structure defines kernel stack for interrupt handlers
-typedef struct __attribute__((packed, aligned(8))) x86_64_taskstate {
-    uint32_t ts_reserved0;
-    uint64_t ts_rsp[3];
-    uint64_t ts_ist[7];
-    uint64_t ts_reserved1;
-    uint16_t ts_reserved2;
-    uint16_t ts_iomap_base;
+typedef struct __attribute__((packed, aligned(4))) x86_64_taskstate {
+    uint32_t ts_reserved0;    // 4 bytes
+    uint64_t ts_rsp[3];       // 24 bytes
+    uint64_t ts_ist[7];       // 56 bytes
+    uint64_t ts_reserved1;    // 8 bytes
+    uint16_t ts_reserved2;    // 2 bytes
+    uint16_t ts_iomap_base;   // 2 bytes
 } x86_64_taskstate;
 
 // Gate descriptor structure defines interrupt handlers
