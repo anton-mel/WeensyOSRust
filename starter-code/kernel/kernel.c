@@ -5,6 +5,7 @@
 //
 //    This is the kernel.
 
+extern int program_load(proc *p, int programnumber, x86_64_pagetable *(*allocator)(void));
 
 // INITIAL PHYSICAL MEMORY LAYOUT
 //

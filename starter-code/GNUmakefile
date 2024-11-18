@@ -11,15 +11,19 @@ TEST_DIR = ./tests/
 
 # DIRECTORIES for each part of the system
 KERN_DIR  = ./kernel
-KERN_RUST_DIR = ./kernel-rust
 PROC_DIR = ./uspace
 SHARED_DIR = ./shared
+
+ROOT_DIR := $(shell realpath $(CURDIR))
+KERN_RUST_DIR = kernel-rust
+RUST_ARCHIVE_FOLDER = $(KERN_RUST_DIR)/target/release
+
 
 # Rust supports foreign function interface (FFI)
 # and can generate compiled object files (.o)
 # that could be linked with C code.
 RUST_TARGET = x86_64-unknown-linux-gnu
-RUSTFLAGS = -C opt-level=3
+
 
 # '$(V)' controls whether the lab makefiles print verbose commands (the
 # actual shell commands run by Make), as well as the "overview" commands
@@ -80,8 +84,8 @@ endif
 BOOT_OBJS = $(OBJDIR)/bootstart.o $(OBJDIR)/boot.o
 
 KERNEL_OBJS = $(OBJDIR)/k-exception.o $(OBJDIR)/kernel.o \
-              $(OBJDIR)/k-hardware.o $(OBJDIR)/vm.o \
-              $(OBJDIR)/k-loader.o
+              $(OBJDIR)/k-hardware.o $(OBJDIR)/vm.o
+KERNEL_OBJS_RUST = $(OBJDIR)/kloader.o
 KERNEL_LINKER_FILES = link/kernel.ld link/shared.ld
 
 PROCESS_BINARIES = $(OBJDIR)/p-allocator $(OBJDIR)/p-allocator2 \
@@ -94,12 +98,31 @@ PROCESS_OBJS = $(OBJDIR)/p-allocator.o $(OBJDIR)/p-fork.o \
 	$(OBJDIR)/p-forkexit.o $(OBJDIR)/p-test.o 
 PROCESS_LINKER_FILES = link/process.ld link/shared.ld
 
+
 # Rust Object sets
 
-generate-bindings:
-	@echo "  GENERATING Rust bindings..."
-	@cd $(KERN_RUST_DIR) && cargo build --release --target $(RUST_TARGET)
-	
+$(KERNEL_OBJS_RUST): 
+	@echo "  BUILDING Rust objects..."
+	@cd $(KERN_RUST_DIR) && cargo build --release
+
+	@echo "  UNPACKING and moving .o files..."
+	@cd $(RUST_ARCHIVE_FOLDER) && \
+	for lib in lib*.a; do \
+		ar x "$$lib"; \
+		libname=$$(basename "$$lib" .a); \
+		libname=$${libname#lib}; \
+		matching_files=$$(echo $$libname*.$$libname*.o); \
+		if [ -n "$$matching_files" ]; then \
+			for obj in $$matching_files; do \
+				mv "$(ROOT_DIR)/$(RUST_ARCHIVE_FOLDER)/$$obj" \
+					"$(ROOT_DIR)/$(OBJDIR)/$$libname.o"; \
+			done; \
+		fi; \
+		for obj in $(ROOT_DIR)/$(RUST_ARCHIVE_FOLDER)/*.o; do \
+			rm -f "$$obj"; \
+		done; \
+	done
+
 
 # Generic rules for making object files
 
@@ -124,8 +147,8 @@ $(OBJDIR)/%.o: $(KERN_DIR)/%.S $(BUILDSTAMPS)
 
 # Specific rules for WeensyOS
 
-$(OBJDIR)/kernel.full: $(KERNEL_OBJS) $(LIB_OBJS) $(PROCESS_BINARIES) $(KERNEL_LINKER_FILES)
-	$(call link,-T $(KERNEL_LINKER_FILES) -o $@ $(KERNEL_OBJS) $(LIB_OBJS) -b binary $(PROCESS_BINARIES),LINK)
+$(OBJDIR)/kernel.full: $(KERNEL_OBJS) $(KERNEL_OBJS_RUST) $(LIB_OBJS) $(PROCESS_BINARIES) $(KERNEL_LINKER_FILES)
+	$(call link,-T $(KERNEL_LINKER_FILES) -o $@ $(KERNEL_OBJS) $(KERNEL_OBJS_RUST) $(LIB_OBJS) -b binary $(PROCESS_BINARIES),LINK)
 
 $(OBJDIR)/p-%.full: $(OBJDIR)/p-%.o $(LIB_OBJS) $(PROCESS_LIB_OBJS) $(PROCESS_LINKER_FILES)
 	$(call link,-T $(PROCESS_LINKER_FILES) -o $@ $< $(PROCESS_LIB_OBJS) $(LIB_OBJS),LINK)
@@ -147,7 +170,7 @@ $(OBJDIR)/bootsector: $(BOOT_OBJS) link/boot.ld link/shared.ld
 $(OBJDIR)/mkbootdisk: build/mkbootdisk.c $(BUILDSTAMPS)
 	$(call run,$(HOSTCC) -I./$(SHARED_DIR) -o $(OBJDIR)/mkbootdisk,HOSTCOMPILE,build/mkbootdisk.c)
 
-weensyos.img: $(OBJDIR)/mkbootdisk $(OBJDIR)/bootsector generate-bindings $(OBJDIR)/kernel
+weensyos.img: $(OBJDIR)/mkbootdisk $(OBJDIR)/bootsector $(OBJDIR)/kernel
 	$(call run,$(OBJDIR)/mkbootdisk $(OBJDIR)/bootsector $(OBJDIR)/kernel > $@,CREATE $@)
 
 
