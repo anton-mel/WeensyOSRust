@@ -3,7 +3,8 @@ name = "kloader"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+bindings = { path = "../bindings" }

@@ -1,1 +1,0 @@
-/home/anton/workspace/WeensyOSRust/starter-code/kernel-rust/target/release/libkloader.a: /home/anton/workspace/WeensyOSRust/starter-code/kernel-rust/kloader/src/bindings.rs /home/anton/workspace/WeensyOSRust/starter-code/kernel-rust/kloader/src/kloader.rs /home/anton/workspace/WeensyOSRust/starter-code/kernel-rust/kloader/src/lib.rs

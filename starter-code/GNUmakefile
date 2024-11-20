@@ -1,5 +1,6 @@
 IMAGE = weensyos.img
-all: $(IMAGE)
+all: $(IMAGE) 
+# remove clean later
 -include build/rules.mk
 
 # '$(TEST_FILE)' controls which of the default test cases will be replaced
@@ -16,13 +17,7 @@ SHARED_DIR = ./shared
 
 ROOT_DIR := $(shell realpath $(CURDIR))
 KERN_RUST_DIR = kernel-rust
-RUST_ARCHIVE_FOLDER = $(KERN_RUST_DIR)/target/release
-
-
-# Rust supports foreign function interface (FFI)
-# and can generate compiled object files (.o)
-# that could be linked with C code.
-RUST_TARGET = x86_64-unknown-linux-gnu
+RUST_ARCHIVE_DIR = $(KERN_RUST_DIR)/target/release
 
 
 # '$(V)' controls whether the lab makefiles print verbose commands (the
@@ -83,9 +78,9 @@ endif
 
 BOOT_OBJS = $(OBJDIR)/bootstart.o $(OBJDIR)/boot.o
 
-KERNEL_OBJS = $(OBJDIR)/k-exception.o $(OBJDIR)/kernel.o \
+KERNEL_OBJS = $(OBJDIR)/k-exception.o \
               $(OBJDIR)/k-hardware.o $(OBJDIR)/vm.o
-KERNEL_OBJS_RUST = $(OBJDIR)/kloader.o
+KERNEL_OBJS_RUST = $(OBJDIR)/kloader.o  $(OBJDIR)/kernel.o
 KERNEL_LINKER_FILES = link/kernel.ld link/shared.ld
 
 PROCESS_BINARIES = $(OBJDIR)/p-allocator $(OBJDIR)/p-allocator2 \
@@ -102,11 +97,14 @@ PROCESS_LINKER_FILES = link/process.ld link/shared.ld
 # Rust Object sets
 
 $(KERNEL_OBJS_RUST): 
+# Rust supports foreign function interface (FFI)
+# and can generate compiled object files (.o)
+# that could be linked with C code.
 	@echo "  BUILDING Rust objects..."
 	@cd $(KERN_RUST_DIR) && cargo build --release
 
 	@echo "  UNPACKING and moving .o files..."
-	@cd $(RUST_ARCHIVE_FOLDER) && \
+	@cd $(RUST_ARCHIVE_DIR) && \
 	for lib in lib*.a; do \
 		ar x "$$lib"; \
 		libname=$$(basename "$$lib" .a); \
@@ -114,11 +112,11 @@ $(KERNEL_OBJS_RUST):
 		matching_files=$$(echo $$libname*.$$libname*.o); \
 		if [ -n "$$matching_files" ]; then \
 			for obj in $$matching_files; do \
-				mv "$(ROOT_DIR)/$(RUST_ARCHIVE_FOLDER)/$$obj" \
+				mv "$(ROOT_DIR)/$(RUST_ARCHIVE_DIR)/$$obj" \
 					"$(ROOT_DIR)/$(OBJDIR)/$$libname.o"; \
 			done; \
 		fi; \
-		for obj in $(ROOT_DIR)/$(RUST_ARCHIVE_FOLDER)/*.o; do \
+		for obj in $(ROOT_DIR)/$(RUST_ARCHIVE_DIR)/*.o; do \
 			rm -f "$$obj"; \
 		done; \
 	done
@@ -147,8 +145,8 @@ $(OBJDIR)/%.o: $(KERN_DIR)/%.S $(BUILDSTAMPS)
 
 # Specific rules for WeensyOS
 
-$(OBJDIR)/kernel.full: $(KERNEL_OBJS) $(KERNEL_OBJS_RUST) $(LIB_OBJS) $(PROCESS_BINARIES) $(KERNEL_LINKER_FILES)
-	$(call link,-T $(KERNEL_LINKER_FILES) -o $@ $(KERNEL_OBJS) $(KERNEL_OBJS_RUST) $(LIB_OBJS) -b binary $(PROCESS_BINARIES),LINK)
+$(OBJDIR)/kernel.full: $(KERNEL_OBJS_RUST) $(KERNEL_OBJS) $(LIB_OBJS) $(PROCESS_BINARIES) $(KERNEL_LINKER_FILES)
+	$(call link,-T $(KERNEL_LINKER_FILES) -o $@ $(KERNEL_OBJS_RUST) $(KERNEL_OBJS) $(LIB_OBJS) -b binary $(PROCESS_BINARIES),LINK)
 
 $(OBJDIR)/p-%.full: $(OBJDIR)/p-%.o $(LIB_OBJS) $(PROCESS_LIB_OBJS) $(PROCESS_LINKER_FILES)
 	$(call link,-T $(PROCESS_LINKER_FILES) -o $@ $< $(PROCESS_LIB_OBJS) $(LIB_OBJS),LINK)

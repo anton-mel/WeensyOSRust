@@ -1,15 +1,11 @@
-// Fix:: Add the panic for boundary checking
-// and fix the pointer arithmetic
+use crate::bindings_x86_64::{
+    Proc,
+    PAGESIZE,
+};
 
-#![no_std]
-#![no_main]
-
-#![allow(dead_code, unused)]
-
-use crate::bindings::{
-    proc_, 
-    elf_program, 
-    elf_header,
+use crate::bindings_elf::{
+    ElfProgram,
+    ElfHeader,
     ELF_MAGIC,
     ELF_PTYPE_LOAD,
 };
@@ -63,64 +59,39 @@ pub static RAMIMAGES: [RamImage; 7] = [
 //    `virtual_memory_map`.
 
 #[no_mangle]
-pub unsafe extern "C" fn program_load(p: *mut proc_, programnumber: usize, allocator: extern fn() -> *mut c_void) -> i32 {
+pub unsafe extern "C" fn program_load(
+    p: *mut Proc, 
+    programnumber: usize, 
+    allocator: extern fn() -> *mut c_void
+) -> i32 {
     // is this a valid program?
     let n_programs = RAMIMAGES.len();
-    if programnumber >= n_programs {
-        loop {} // panic here
-    }
+    assert!(programnumber < n_programs);
 
-    // Get the elf_header from the RAM image at the specified program_number
+    // Get the ElfHeader from the RAM image at the specified program_number
     let ram_image = &RAMIMAGES[programnumber];
     let eh_ptr = ram_image.begin as *const u8; // Pointer to the start of the image
-    let eh: &elf_header = unsafe { &*(eh_ptr as *const elf_header) }; // Cast to elf_header
-    if (eh.e_magic != ELF_MAGIC) {
-        loop {} // panic here
-    }
+    let eh: &ElfHeader = unsafe { &*(eh_ptr as *const ElfHeader) }; // Cast to ElfHeader
+    assert!(eh.e_magic == ELF_MAGIC);
 
     // Load each loadable program segment into memory
-    let ph: &mut [elf_program] = unsafe {
-        let program_header_ptr = (eh as *const elf_header as *const u8).offset(eh.e_phoff as isize);
-        &mut *(program_header_ptr as *mut [elf_program; 10]) // Adjust array size as necessary
+    let ph: &mut [ElfProgram] = unsafe {
+        let program_header_ptr = (eh as *const ElfHeader as *const u8).offset(eh.e_phoff as isize);
+        &mut *(program_header_ptr as *mut [ElfProgram; 10]) // Adjust array size as necessary
     };
 
-    unsafe {
-        // Use a raw pointer to manually access the array and avoid bounds checking
-        let ph_ptr = ph.as_mut_ptr();
-        
-        for i in 0..eh.e_phnum as usize {
-            // Ensure that the pointer is within bounds
-            let ph_element = ph_ptr.add(i);
-            
-            // Manually check if we're within the bounds (no bounds checking done by Rust)
-            if ph_element < ph_ptr.add(ph.len()) {
-                // Safe to dereference without bounds checking
-                if (*ph_element).p_type == ELF_PTYPE_LOAD {
-                    let pdata = (eh as *const elf_header as *const u8)
-                        .offset((*ph_element).p_offset as isize);
-                    
-                    if program_load_segment(p, ph_element, pdata, allocator) < 0 {
-                        return -1;
-                    }
-                }
-            } else {
-                loop {} // Handle out-of-bounds access (you can customize this)
+    // Return to this solution later on
+    for i in 0..eh.e_phnum as usize {
+        if ph[i].p_type == ELF_PTYPE_LOAD {
+            let pdata = unsafe {
+                (eh as *const ElfHeader as *const u8).offset(ph[i].p_offset as isize)
+            };
+
+            if program_load_segment(p, &ph[i], pdata, allocator) < 0 {
+                return -1; // Return failure code if segment load fails
             }
         }
     }
-
-    // Return to this solution later on
-    // for i in 0..eh.e_phnum as usize {
-    //     if ph[i].p_type == ELF_PTYPE_LOAD {
-    //         let pdata = unsafe {
-    //             (eh as *const elf_header as *const u8).offset(ph[i].p_offset as isize)
-    //         };
-
-    //         if program_load_segment(p, &ph[i], pdata, allocator) < 0 {
-    //             return -1; // Return failure code if segment load fails
-    //         }
-    //     }
-    // }
 
     // set the entry point from the ELF header
     (*p).p_registers.reg_rip = eh.e_entry;
@@ -135,16 +106,50 @@ pub unsafe extern "C" fn program_load(p: *mut proc_, programnumber: usize, alloc
 //    to map them in `p->p_pagetable`. Returns 0 on success and -1 on failure.
 
 #[no_mangle]
-pub unsafe extern "C" fn program_load_segment(p: *mut proc_, ph: *const elf_program, src: *const u8, allocator: extern fn() -> *mut c_void) -> c_int {
-    0 // Default return value (indicating success)
-}
+pub unsafe extern "C" fn program_load_segment(
+    p: *mut Proc,
+    ph: *const ElfProgram,
+    _src: *const u8,
+    _allocator: extern "C" fn() -> *mut c_void,
+) -> c_int {
+    if p.is_null() || ph.is_null() {
+        return -1; // Validate pointers
+    }
 
+    let mut va = (*ph).p_va;
+    let _end_file = va + (*ph).p_filesz;
+    let end_mem = va + (*ph).p_memsz;
+    va &= !(PAGESIZE - 1);       // round to page boundary
 
-use core::panic::PanicInfo;
+    // allocate memory
+    while va < end_mem {
+        // Note: First, implement kernel crate
+        // if assign_physical_page(va, (*p).p_pid) < 0
+        //     || virtual_memory_map((*p).p_pagetable, va, va, PAGESIZE, PTE_P | PTE_W | PTE_U) < 0
+        // {
+        //     eprintln!(
+        //         "program_load_segment(pid {}): can't assign address {:#x}",
+        //         (*p).p_pid,
+        //         va
+        //     );
+        //     return -1;
+        // }
+        va += PAGESIZE;
+    }
 
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    // Handle this later
-    // using bindings
-    loop {};
+    // Note: First, implement vm crate
+    // Ensure new memory mappings are active
+    // set_pagetable((*p).p_pagetable);
+
+    // Copy data from the source to the destination in memory
+    // let dst = (*ph).p_va as *mut c_void;
+    // memcpy(dst, src as *const c_void, (*ph).p_filesz as size_t);
+
+    // Zero out remaining memory
+    // let clear_start = (dst as usize + (*ph).p_filesz) as *mut c_void;
+    // memset(clear_start, 0, ((*ph).p_memsz - (*ph).p_filesz) as size_t);
+
+    // Restore the kernel pagetable
+    // set_pagetable(core::ptr::null_mut());
+    0 // Success
 }

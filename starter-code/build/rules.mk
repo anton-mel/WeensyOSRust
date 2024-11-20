@@ -94,7 +94,7 @@ clean: cleanrust
 	$(call run,rm -rf $(DEPSDIR) $(OBJDIR) *.img core *.core,CLEAN)
 
 cleanrust:
-	@echo "Cleaning Rust Files..."
+	@echo "  Cleaning Rust Files..."
 	@cd $(KERN_RUST_DIR) && cargo clean
 
 realclean: clean

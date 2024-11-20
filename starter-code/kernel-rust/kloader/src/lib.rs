@@ -1,7 +1,6 @@
-#![no_std]
-#![no_main]
+use bindings::{
+    bindings_x86_64,
+    bindings_elf,
+};
 
-// Bindings to the C-headers
-// Includes x86-64, stdlib, and ELF
-mod bindings;
-mod kloader;
+pub mod kloader;
