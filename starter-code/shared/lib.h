@@ -69,7 +69,7 @@ void assert_fail(const char* file, int line, const char* msg)
 
 // panic(format, ...)
 //    Print the message determined by `format` and fail.
-void panic(const char* format, ...) __attribute__((noinline, noreturn));
+void c_panic(const char* format, ...) __attribute__((noinline, noreturn));
 
 
 // Min, max, and rounding operations

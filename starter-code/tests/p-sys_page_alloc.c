@@ -29,12 +29,12 @@ void process_main(void) {
     // Test for alignment
     int x = sys_page_alloc((void *) (end + 0x10));
     if(x != -1){
-        panic("Error, sys_page_alloc doesn't check for alignment!");
+        c_panic("Error, sys_page_alloc doesn't check for alignment!");
     }
     // Test for accessing beyond size limits
     x = sys_page_alloc((void *) MEMSIZE_VIRTUAL + PAGESIZE);
     if(x != -1){
-        panic("Error, sys_page_alloc doesn't check for VM bounds!");
+        c_panic("Error, sys_page_alloc doesn't check for VM bounds!");
     }
 
     TEST_PASS();

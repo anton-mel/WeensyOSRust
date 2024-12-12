@@ -22,7 +22,7 @@ void process_main(void) {
     if(smap.pa == (uintptr_t)stack_bottom){
         // This case shouldn't take place now that we checked stack is at end
         // Consider ghostly interference
-        panic("Error, stack is not allocated virtually");
+        c_panic("Error, stack is not allocated virtually");
     }
 
     // No need to check perm, otherwise nothing will work

@@ -21,7 +21,7 @@ void process_main(void) {
     sys_mapping(KERNEL_ADDR, &kmap);
 
     if(kmap.perm &(PTE_U))
-        panic("Kernel accessible by process!");
+        c_panic("Kernel accessible by process!");
 
     TEST_PASS();
 }

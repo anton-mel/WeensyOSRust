@@ -628,7 +628,7 @@ static void fail(void) {
 //    Use console_printf() to print a failure message and then wait for
 //    control-C. Also write the failure message to the log.
 
-void panic(const char* format, ...) {
+void c_panic(const char* format, ...) {
     va_list val;
     va_start(val, format);
 
@@ -648,10 +648,10 @@ void panic(const char* format, ...) {
 }
 
 void assert_fail(const char* file, int line, const char* msg) {
-    panic("%s:%d: assertion '%s' failed\n", file, line, msg);
+    c_panic("%s:%d: assertion '%s' failed\n", file, line, msg);
 }
 
 void default_exception(proc* p){
     x86_64_registers * reg = &(p->p_registers);
-    panic("Unexpected exception %d!\n", reg->reg_intno);
+    c_panic("Unexpected exception %d!\n", reg->reg_intno);
 }

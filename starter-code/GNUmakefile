@@ -1,5 +1,5 @@
 IMAGE = weensyos.img
-all: $(IMAGE) 
+all: clean $(IMAGE) 
 # remove clean later
 -include build/rules.mk
 
@@ -11,13 +11,13 @@ TEST_FILE ?= p-test.c
 TEST_DIR = ./tests/
 
 # DIRECTORIES for each part of the system
-KERN_DIR  = ./kernel
+BOOT_DIR  = ./bootloader
 PROC_DIR = ./uspace
 SHARED_DIR = ./shared
+KERN_DIR = ./kernel
 
 ROOT_DIR := $(shell realpath $(CURDIR))
-KERN_RUST_DIR = kernel-rust
-RUST_ARCHIVE_DIR = $(KERN_RUST_DIR)/target/release
+RUST_ARCHIVE_DIR = $(KERN_DIR)/target/release
 
 
 # '$(V)' controls whether the lab makefiles print verbose commands (the
@@ -101,7 +101,7 @@ $(KERNEL_OBJS_RUST):
 # and can generate compiled object files (.o)
 # that could be linked with C code.
 	@echo "  BUILDING Rust objects..."
-	@cd $(KERN_RUST_DIR) && cargo build --release
+	@cd $(KERN_DIR) && cargo build --release
 
 	@echo "  UNPACKING and moving .o files..."
 	@cd $(RUST_ARCHIVE_DIR) && \
@@ -133,13 +133,13 @@ $(PROCESS_LIB_OBJS): $(OBJDIR)/%.o: $(PROC_DIR)/%.c $(BUILDSTAMPS)
 $(PROCESS_OBJS): $(OBJDIR)/%.o: $(PROC_DIR)/%.c $(BUILDSTAMPS)
 	$(call compile,-O1 -DWEENSYOS_PROCESS -I ./$(SHARED_DIR) -c $< -o $@,COMPILE)
 
-$(OBJDIR)/%.o: $(KERN_DIR)/%.c $(BUILDSTAMPS)
+$(OBJDIR)/%.o: $(BOOT_DIR)/%.c $(BUILDSTAMPS)
 	$(call compile,-DWEENSYOS_KERNEL -I ./$(SHARED_DIR) -c $< -o $@,COMPILE)
 
-$(OBJDIR)/boot.o: $(OBJDIR)/%.o: $(KERN_DIR)/boot.c $(BUILDSTAMPS)
+$(OBJDIR)/boot.o: $(OBJDIR)/%.o: $(BOOT_DIR)/boot.c $(BUILDSTAMPS)
 	$(call compile,-Os -fomit-frame-pointer -I ./$(SHARED_DIR) -c $< -o $@,COMPILE)
 
-$(OBJDIR)/%.o: $(KERN_DIR)/%.S $(BUILDSTAMPS)
+$(OBJDIR)/%.o: $(BOOT_DIR)/%.S $(BUILDSTAMPS)
 	$(call compile, -I ./$(SHARED_DIR) -c $< -o $@,ASSEMBLE)
 
 

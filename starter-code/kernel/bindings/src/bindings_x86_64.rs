@@ -1,4 +1,4 @@
-// x86_64.rs: Rust-C code to interface with x86 hardware and CPU.
+// Bindigns to x86_64.h: Rust-C code to interface with x86 hardware and CPU.
 //
 //   Contents:
 //   - Memory and interrupt constants.
@@ -6,6 +6,9 @@
 //   - x86 functions: C function wrappers for useful x86 instructions.
 //   - Hardware structures: C structures and constants for initializing
 //     x86 hardware, including the interrupt descriptor table.
+
+use crate::bindings_kernel::P_FREE;
+use crate::bindings_kernel::Procstate;
 
 pub type X86_64PageentryT = u64;
 pub type ProcstateT = ::core::ffi::c_uint;
@@ -17,6 +20,18 @@ const PAGEOFFBITS: usize = 12;                     // # bits in page offset
 pub fn page_number(ptr: *const u8) -> usize {
     (ptr as usize) >> PAGEOFFBITS
 }
+
+// Page table entry flags
+pub const PTE_FLAGS: X86_64PageentryT = 0xFFF;
+// - Permission flags: define whether page is accessible
+pub const PTE_P: X86_64PageentryT = 1;      // entry is Present
+pub const PTE_W: X86_64PageentryT = 2;      // entry is Writeable
+pub const PTE_U: X86_64PageentryT = 4;      // entry is User-accessible
+// - Accessed flags: automatically turned on by processor
+pub const PTE_A: X86_64PageentryT = 32;     // entry was Accessed (read/written)
+pub const PTE_D: X86_64PageentryT = 64;     // entry was Dirtied (written)
+pub const PTE_PS: X86_64PageentryT = 128;   // entry has a large Page Size
+// - There are other flags too!
 
 #[repr(C)]
 #[repr(align(4096))]
@@ -92,33 +107,44 @@ impl Default for x86_64_registers {
     }
 }
 
-#[derive(Debug)]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct Proc {
     pub p_pid: PidT,
     pub p_registers: x86_64_registers,
     pub p_state: ProcstateT,
-    pub p_pagetable: Option<Box<x86_64_pagetable>>,
+    pub p_pagetable: *mut x86_64_pagetable,
     pub display_status: u8,
 }
+
+unsafe impl Send for Proc {}
+unsafe impl Sync for Proc {}
 
 impl Default for Proc {
     fn default() -> Self {
         Proc {
             p_pid: 0,
             p_registers: x86_64_registers::default(),
-            p_state: 0,
-            p_pagetable: Some(Box::new(x86_64_pagetable {
-                entry: [0; 512],
-            })),
+            p_state: P_FREE,
+            p_pagetable: core::ptr::null_mut(),
             display_status: 0,
         }
     }
 }
 
 impl Proc {
-    pub fn new(pid: PidT) -> Self {
+    pub fn new(pid: PidT, state: Procstate) -> Self {
         let mut proc = Proc::default();
         proc.p_pid = pid;
+        proc.p_state = state;
         proc
     }
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Copy, Clone)]
+pub struct VAMapping {
+    pub pn: core::ffi::c_int,
+    pub pa: usize,
+    pub perm: core::ffi::c_int,
 }

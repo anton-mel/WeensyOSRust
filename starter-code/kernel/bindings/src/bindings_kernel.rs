@@ -1,9 +1,23 @@
 #![allow(unused)]
 
+// Bindings to kernel.h
+//
+//    Functions, constants, and definitions for the kernel.
+
+
 use crate::bindings_x86_64::PAGESIZE;
+
+// Process state type
+pub const P_FREE: Procstate = 0;
+pub const P_RUNNABLE: Procstate = 1;
+pub const P_BLOCKED: Procstate = 2;
+pub const P_BROKEN: Procstate = 3;
+pub type Procstate = ::core::ffi::c_uint;
+pub use self::Procstate as ProcstateT;
 
 // Maximum number of processes
 pub const NPROC: usize = 16;
+
 
 // Kernel start address
 pub const KERNEL_START_ADDR: u64 = 0x40000;

@@ -24,7 +24,7 @@ void process_main(void) {
     int x = sys_page_alloc((void *) (heap_top));
 
     if(x != 0)
-        panic("Error, couldn't allocate same memory location!\n");
+        c_panic("Error, couldn't allocate same memory location!\n");
 
     // yield to make sure other process also runs before continuing
     sys_yield();
@@ -40,7 +40,7 @@ void process_main(void) {
     // Now, test at least 100 times to see if values will ever change
     for(int i = 0 ; i < 100 ; i++){
         if(*heap_top != p)
-            panic("Error, value changed! process memory not isolated!\n");
+            c_panic("Error, value changed! process memory not isolated!\n");
         sys_yield();
     }
 

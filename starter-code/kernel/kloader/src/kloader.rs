@@ -1,15 +1,4 @@
-use crate::bindings_x86_64::{
-    Proc,
-    PAGESIZE,
-};
-
-use crate::bindings_elf::{
-    ElfProgram,
-    ElfHeader,
-    ELF_MAGIC,
-    ELF_PTYPE_LOAD,
-};
-
+use crate::*;
 use core::ffi::c_void;
 use core::ffi::c_int;
 
@@ -66,35 +55,35 @@ pub unsafe extern "C" fn program_load(
 ) -> i32 {
     // is this a valid program?
     let n_programs = RAMIMAGES.len();
-    assert!(programnumber < n_programs);
+    // assert!(programnumber < n_programs);
 
-    // Get the ElfHeader from the RAM image at the specified program_number
-    let ram_image = &RAMIMAGES[programnumber];
-    let eh_ptr = ram_image.begin as *const u8; // Pointer to the start of the image
-    let eh: &ElfHeader = unsafe { &*(eh_ptr as *const ElfHeader) }; // Cast to ElfHeader
-    assert!(eh.e_magic == ELF_MAGIC);
+    // // Get the ElfHeader from the RAM image at the specified program_number
+    // let ram_image = &RAMIMAGES[programnumber];
+    // let eh_ptr = ram_image.begin as *const u8; // Pointer to the start of the image
+    // let eh: &ElfHeader = unsafe { &*(eh_ptr as *const ElfHeader) }; // Cast to ElfHeader
+    // assert!(eh.e_magic == ELF_MAGIC);
 
-    // Load each loadable program segment into memory
-    let ph: &mut [ElfProgram] = unsafe {
-        let program_header_ptr = (eh as *const ElfHeader as *const u8).offset(eh.e_phoff as isize);
-        &mut *(program_header_ptr as *mut [ElfProgram; 10]) // Adjust array size as necessary
-    };
+    // // Load each loadable program segment into memory
+    // let ph: &mut [ElfProgram] = unsafe {
+    //     let program_header_ptr = (eh as *const ElfHeader as *const u8).offset(eh.e_phoff as isize);
+    //     &mut *(program_header_ptr as *mut [ElfProgram; 10]) // Adjust array size as necessary
+    // };
 
-    // Return to this solution later on
-    for i in 0..eh.e_phnum as usize {
-        if ph[i].p_type == ELF_PTYPE_LOAD {
-            let pdata = unsafe {
-                (eh as *const ElfHeader as *const u8).offset(ph[i].p_offset as isize)
-            };
+    // // Return to this solution later on
+    // for i in 0..eh.e_phnum as usize {
+    //     if ph[i].p_type == ELF_PTYPE_LOAD {
+    //         let pdata = unsafe {
+    //             (eh as *const ElfHeader as *const u8).offset(ph[i].p_offset as isize)
+    //         };
 
-            if program_load_segment(p, &ph[i], pdata, allocator) < 0 {
-                return -1; // Return failure code if segment load fails
-            }
-        }
-    }
+    //         if program_load_segment(p, &ph[i], pdata, allocator) < 0 {
+    //             return -1; // Return failure code if segment load fails
+    //         }
+    //     }
+    // }
 
-    // set the entry point from the ELF header
-    (*p).p_registers.reg_rip = eh.e_entry;
+    // // set the entry point from the ELF header
+    // (*p).p_registers.reg_rip = eh.e_entry;
     0 // Success (Required by C-kernel)
 }
 

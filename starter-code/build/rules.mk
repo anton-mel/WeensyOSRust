@@ -95,7 +95,7 @@ clean: cleanrust
 
 cleanrust:
 	@echo "  Cleaning Rust Files..."
-	@cd $(KERN_RUST_DIR) && cargo clean
+	@cd $(KERN_DIR) && cargo clean
 
 realclean: clean
 	$(call run,rm -rf $(DISTDIR)-$(USER).tar.gz $(DISTDIR)-$(USER))

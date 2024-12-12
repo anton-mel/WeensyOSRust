@@ -34,14 +34,14 @@ void process_main(void) {
     sys_mapping((uintptr_t) code_page, &child_cmap);
 
     if(child_cmap.pa != map.pa){
-        panic("Error, code pages not shared!");
+        c_panic("Error, code pages not shared!");
     }
 
     sys_yield();
     sys_yield();
 
     if(child_cmap.pa == (uintptr_t)code_page || map.pa == (uintptr_t)code_page)
-        panic("Error, code pages are not virtually mapped!");
+        c_panic("Error, code pages are not virtually mapped!");
 
     sys_yield();
     TEST_PASS();
