@@ -22,10 +22,10 @@ use core::sync::atomic::{
 //    This is the kernel.
 
 unsafe extern "C" {
-    #[link(name = "vm")] fn set_pagetable(pagetable: *mut x86_64_pagetable);
-    #[link(name = "vm")] fn virtual_memory_map(pagetable: *mut x86_64_pagetable, vaddr: usize, paddr: usize, size: usize, flags: u32) -> core::ffi::c_int;
-    #[link(name = "vm")] fn virtual_memory_lookup(pagetable: *mut x86_64_pagetable, va: usize) -> VAMapping;
-    #[link(name = "k-hardware")] pub fn c_panic(format: *const core::ffi::c_char, ...) -> !;
+    fn set_pagetable(pagetable: *mut x86_64_pagetable);
+    fn virtual_memory_map(pagetable: *mut x86_64_pagetable, vaddr: usize, paddr: usize, size: usize, flags: u32) -> core::ffi::c_int;
+    fn virtual_memory_lookup(pagetable: *mut x86_64_pagetable, va: usize) -> VAMapping;
+    fn c_panic(format: *const core::ffi::c_char, ...) -> !;
     static kernel_pagetable: *mut x86_64_pagetable;
 }
 
@@ -68,11 +68,15 @@ impl Kernel {
     //    Initialize the hardware and processes and start running. The `command`
     //    string is an optional string passed from the boot loader.
 
-    pub fn kernel(&mut self, command: &str) {
+    pub fn kernel(&mut self, command: *const u8) {
         unsafe extern "C" {
-            #[link(name = "k-hardware")] fn hardware_init();
-            #[link(name = "lib")] fn console_clear();
+            fn hardware_init();
+            fn console_clear();
             fn timer_init(hz: u32);
+            fn strcmp(
+                a: *const core::ffi::c_char,
+                b: *const core::ffi::c_char,
+            ) -> core::ffi::c_int;
         }
 
         unsafe{
@@ -82,19 +86,19 @@ impl Kernel {
             console_clear();
             timer_init(HZ);
 
-            match command {
-                "fork" => self.process_setup(1, 4),
-                "forkexit" => self.process_setup(1, 5),
-                "test" => self.process_setup(1, 6),
-                "test2" => {
-                    for i in 1..=2 {
-                        self.process_setup(i, 6);
-                    }
+            if !command.is_null() && strcmp(command as *const i8, "fork".as_ptr() as *const i8) == 0 {
+                self.process_setup(1, 4);
+            } else if !command.is_null() && strcmp(command as *const i8, "forkexit".as_ptr() as *const i8) == 0 {
+                self.process_setup(1, 5);
+            } else if !command.is_null() && strcmp(command as *const i8, "test".as_ptr() as *const i8) == 0 {
+                self.process_setup(1, 6);
+            } else if !command.is_null() && strcmp(command as *const i8, "test2".as_ptr() as *const i8) == 0 {
+                for i in 1..=2 {
+                    self.process_setup(i, 6);
                 }
-                _ => {
-                    for i in 1..=4 {
-                        self.process_setup(i, i - 1);
-                    }
+            } else {
+                for i in 1..=4 {
+                    self.process_setup(i, i - 1);
                 }
             }
 
@@ -157,7 +161,7 @@ impl Kernel {
         extern "C" {
             static mut start_data: u8;
             static mut end: u8;
-            pub fn console_printf(
+            fn console_printf(
                 cpos: i32,
                 color: i32,
                 format: *const u8,
@@ -210,6 +214,7 @@ impl Kernel {
     //    Check operating system invariants about ownership and reference
     //    counts for page table `pt`. Panic if any of the invariants are false.
 
+    #[allow(unused)]
     pub fn check_page_table_ownership(&self, pt: *mut x86_64_pagetable, pid: i32) {
         unsafe {
             let mut owner = pid;
@@ -228,6 +233,7 @@ impl Kernel {
         }
     }
 
+    #[allow(unused)]
     pub fn check_page_table_ownership_level(&self, pt: *mut x86_64_pagetable, level: usize, owner: i32, refcount: u32) {
         unsafe {
             let page_number = (pt as usize) / PAGESIZE as usize;
@@ -286,7 +292,6 @@ impl Kernel {
     #[allow(non_snake_case)]
     pub fn exception(&mut self, reg: &mut x86_64_registers) {
         unsafe extern "C" {
-            #[link(name = "k-hardware")]
             fn check_keyboard() -> core::ffi::c_int;
             fn console_show_cursor(cpos: core::ffi::c_int);
             fn default_exception(p: *mut Proc);
@@ -295,7 +300,7 @@ impl Kernel {
                 src: *const core::ffi::c_void,
                 n: usize,
             ) -> *mut ::std::os::raw::c_void;
-            pub fn console_printf(
+            fn console_printf(
                 cpos: i32,
                 color: i32,
                 format: *const u8,
@@ -380,13 +385,13 @@ impl Kernel {
             }
             INT_SYS_MAPPING => {
                 unsafe {
-                    let mut current = self.proc_table.get_current_process_mut();
+                    let current = self.proc_table.get_current_process_mut();
                     syscall_mapping(&mut *current);
                 }
             }
             INT_SYS_MEM_TOG => {
                 unsafe {
-                    let mut current = self.proc_table.get_current_process_mut();
+                    let current = self.proc_table.get_current_process_mut();
                     syscall_mem_tog(&mut *current);
                 }
             }
@@ -396,11 +401,11 @@ impl Kernel {
                 /* will not be reached */
             }
             INT_PAGEFAULT => {
-                let mut current = self.proc_table.get_current_process_mut();
+                let current = self.proc_table.get_current_process_mut();
                 // Analyze faulting address and access type.
-                let addr = unsafe { rcr2() };
-                let operation = if reg.reg_err & PFERR_WRITE as u64 != 0 { "write" } else { "read" };
-                let problem = if reg.reg_err & PFERR_PRESENT as u64 != 0 { "protection problem" } else { "missing page" };
+                // let addr = unsafe { rcr2() };
+                // let operation = if reg.reg_err & PFERR_WRITE as u64 != 0 { "write" } else { "read" };
+                // let problem = if reg.reg_err & PFERR_PRESENT as u64 != 0 { "protection problem" } else { "missing page" };
 
                 if reg.reg_err & PFERR_USER as u64 == 0 {
                     unsafe {
@@ -418,7 +423,7 @@ impl Kernel {
             }
             _ => {
                 unsafe {
-                    let mut current = self.proc_table.get_current_process_mut();
+                    let current = self.proc_table.get_current_process_mut();
                     default_exception(&mut *current);
                     /* will not be reached */
                 }
@@ -475,9 +480,7 @@ pub unsafe extern "C" fn syscall_mem_tog(process: &mut Proc) {
     let p = process.p_registers.reg_rdi as PidT;
 
     if p == 0 {
-        unsafe {
-            DISP_GLOBAL.fetch_xor(1, Ordering::SeqCst);
-        }
+        DISP_GLOBAL.fetch_xor(1, Ordering::SeqCst);
     } else {
         if p < 0 || p > NPROC as i32 || p != process.p_pid {
             return;

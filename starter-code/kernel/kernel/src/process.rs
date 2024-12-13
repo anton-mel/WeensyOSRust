@@ -1,14 +1,13 @@
 use bindings::bindings_x86_64::*;
 use bindings::bindings_kernel::*;
-use crate::virtual_memory_map;
 use stdlib::my_assert;
 
 unsafe extern "C" {
-    #[link(name = "vm")] fn set_pagetable(pagetable: *mut x86_64_pagetable);
-    #[link(name = "kloader")] fn program_load(process: *mut Proc, program_number: i32, arg: *const u8) -> i32;
-    #[link(name = "k-exception")] fn exception_return(registers: *const x86_64_registers);
-    #[link(name = "k-hardware")] fn process_init(process: *mut Proc);
-    #[link(name = "k-hardware")] pub fn c_panic(format: *const core::ffi::c_char, ...) -> !;
+    fn set_pagetable(pagetable: *mut x86_64_pagetable);
+    fn program_load(process: *mut Proc, program_number: i32, arg: *const u8) -> i32;
+    fn exception_return(registers: *const x86_64_registers);
+    fn process_init(process: *mut Proc);
+    fn c_panic(format: *const core::ffi::c_char, ...) -> !;
     static kernel_pagetable: *mut x86_64_pagetable;
 }
 
@@ -36,7 +35,7 @@ impl ProcessTable {
     //    %rip and %rsp, gives it a stack page, and marks it as runnable.
 
     pub fn process_setup(&mut self, pid: usize, pn: usize) -> Proc {
-        let p = &mut self.processes[pid];
+        let p = self.get_process_by_pid_mut(pid);
         unsafe { 
             process_init(p);
             p.p_pagetable = kernel_pagetable;
@@ -54,9 +53,12 @@ impl ProcessTable {
     //    As a side effect, sets `current = p`.
 
     pub fn run(&mut self, pid: usize) {
-        let p = &mut self.processes[pid];
-        // assert(p.p_state == P_RUNNABLE);
-        self.current = Some(p);
+        let p_ptr = self.get_process_by_pid_mut(pid) as *mut Proc;
+        unsafe{
+            my_assert!((*p_ptr).p_state == P_RUNNABLE);
+            self.current = Some(p_ptr);
+        }
+        let p = self.get_process_by_pid_mut(pid);
         unsafe{
             // Load the process's current pagetable.
             set_pagetable(p.p_pagetable);
@@ -73,7 +75,6 @@ impl ProcessTable {
 
     pub fn schedule(&mut self) {
         unsafe extern "C" {
-            #[link(name = "k-hardware")]
             fn check_keyboard() -> core::ffi::c_int;
         }
     
@@ -122,9 +123,7 @@ impl ProcessTable {
         match self.current {
             Some(ptr) => unsafe {
                 if ptr.is_null() {
-                    unsafe {
-                        c_panic("(get_current_process) current process pointer is null.".as_ptr() as *const core::ffi::c_char);
-                    }
+                    c_panic("(get_current_process) current process pointer is null.".as_ptr() as *const core::ffi::c_char);
                 } else {
                     *ptr
                 }
@@ -142,9 +141,7 @@ impl ProcessTable {
         match self.current {
             Some(ptr) => unsafe {
                 if ptr.is_null() {
-                    unsafe {
-                        c_panic("(get_current_process_mut) current process pointer is null.".as_ptr() as *const core::ffi::c_char);
-                    }
+                    c_panic("(get_current_process_mut) current process pointer is null.".as_ptr() as *const core::ffi::c_char);
                 } else {
                     &mut *ptr
                 }
@@ -153,6 +150,18 @@ impl ProcessTable {
                 c_panic("(get_current_process_mut) No current process available.".as_ptr() as *const core::ffi::c_char);
             },
         }
+    }
+
+    // get_process_by_pid_mut
+    //    Returns a mutable reference to the process with the given PID, if it exists.
+    //    If the PID is invalid or the process is not set, triggers a panic.
+    pub fn get_process_by_pid_mut(&mut self, pid: usize) -> &mut Proc {
+        if pid >= NPROC {
+            unsafe {
+                c_panic("(get_process_by_pid_mut) Invalid PID.".as_ptr() as *const core::ffi::c_char);
+            }
+        }
+        &mut self.processes[pid]
     }
 
     // set_register_rax

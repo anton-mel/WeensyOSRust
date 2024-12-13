@@ -1,5 +1,6 @@
-use bindings::bindings_x86_64::*;
+#![allow(unused)]
 
+use bindings::bindings_x86_64::*;
 
 // memshow_physical
 //    Draw a picture of physical memory on the CGA console.
@@ -49,7 +50,7 @@ pub unsafe extern "C" fn memshow_physical() {
 //    the CGA console.
 
 #[no_mangle]
-pub unsafe extern "C" fn memshow_virtual(pagetable: &x86_64_pagetable, name: *const u8) {
+pub unsafe extern "C" fn memshow_virtual(_pagetable: &x86_64_pagetable, _name: *const u8) {
     // assert_eq!(pagetable as *const _ as usize, PTE_ADDR(pagetable as *const _ as usize));
 
     // console_printf(CPOS(10, 26), 0x0F00, "VIRTUAL ADDRESS SPACE FOR {}", name);

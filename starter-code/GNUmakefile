@@ -1,5 +1,5 @@
 IMAGE = weensyos.img
-all: $(IMAGE) 
+all: clean $(IMAGE) 
 # remove clean later
 -include build/rules.mk
 

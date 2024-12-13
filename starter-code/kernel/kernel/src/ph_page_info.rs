@@ -41,7 +41,7 @@ pub struct PhysicalPageInfoTable {
 
 impl PhysicalPageInfoTable {
     pub const fn new() -> Self {
-        let mut pageinfo = [
+        let pageinfo = [
             PhysicalPageInfo { 
                 owner: PageOwner::PoFree as i8, 
                 refcount: 0 
@@ -54,9 +54,7 @@ impl PhysicalPageInfoTable {
 
     pub fn pageinfo_init(&mut self) {
         extern "C" {
-            #[link(name = "k-hardware")] 
             fn physical_memory_isreserved(pa: usize) -> core::ffi::c_int;
-            static mut start_data: u8;
             static mut end: u8;
         }
 

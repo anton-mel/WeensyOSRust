@@ -175,6 +175,17 @@ pub const INT_STACK: u32 = 0xc;         // Stack exception
 pub const INT_GPF: u32 = 0xd;           // General protection fault
 pub const INT_PAGEFAULT: u32 = 0xe;     // Page fault
 
+pub const INT_SYS: u32 = 48;
+pub const INT_SYS_PANIC: u32 = 48;
+pub const INT_SYS_GETPID: u32 = 49;
+pub const INT_SYS_YIELD: u32 = 50;
+pub const INT_SYS_PAGE_ALLOC: u32 = 51;
+pub const INT_SYS_FORK: u32 = 52;
+pub const INT_SYS_EXIT: u32 = 53;
+pub const INT_SYS_MAPPING: u32 = 54;
+pub const INT_SYS_MEM_TOG: u32 = 56;
+pub const INT_SYS_BRK: u32 = 57;
+pub const INT_SYS_SBRK: u32 = 58;
 
 #[inline(always)]
 pub unsafe fn rcr2() -> u64 {
