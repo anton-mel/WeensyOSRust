@@ -17,7 +17,12 @@ pub type ProcstateT = ::core::ffi::c_uint;
 pub type PidT = ::core::ffi::c_int;
 
 pub const PAGESIZE: u64 = 4096;
-const PAGEOFFBITS: usize = 12;                     // # bits in page offset
+pub const PAGE_OFF_MASK: usize = PAGESIZE as usize - 1;
+const PAGEOFFBITS: usize = 12;  // # bits in page offset
+
+pub fn page_offset(addr: *const u8) -> usize {
+    (addr as usize) & PAGE_OFF_MASK
+}
 
 pub fn page_number(ptr: *const u8) -> usize {
     (ptr as usize) >> PAGEOFFBITS
@@ -45,11 +50,43 @@ pub const PFERR_PRESENT: u8 = 0x1;   // Fault happened due to a protection viola
 pub const PFERR_WRITE: u8 = 0x2;     // Fault happened on a write
 pub const PFERR_USER: u8 = 0x4;      // Fault happened in an application (user mode) (rather than kernel)
 
+extern "C" {
+    pub fn c_panic(format: *const core::ffi::c_char, ...) -> !;
+}
+
 #[repr(C)]
 #[repr(align(4096))]
 #[derive(Debug, Copy, Clone)]
 pub struct x86_64_pagetable {
     pub entry: [X86_64PageentryT; 512usize],
+}
+
+impl x86_64_pagetable {
+    pub fn new() -> Self {
+        x86_64_pagetable {
+            entry: [0; 512],
+        }
+    }
+
+    /// Sets a page table entry at the specified index.
+    /// 
+    /// # Arguments
+    /// * `index` - Index of the entry to set (0-511).
+    /// * `value` - Value to set for the page table entry.
+    #[no_mangle]
+    pub fn set_entry(
+        &mut self, 
+        index: usize, 
+        value: X86_64PageentryT,
+    ) {
+        if index < 512 {
+            self.entry[index] = value;
+        } else {
+            unsafe {
+                c_panic("Index out of bounds for x86_64_pagetable".as_ptr() as *const i8);
+            }
+        }
+    }
 }
 
 unsafe impl Send for x86_64_pagetable {}
@@ -194,4 +231,16 @@ pub unsafe fn rcr2() -> u64 {
     let mut val: u64;
     asm!("movq %%cr2, {0}", out(reg) val);
     val
+}
+
+#[inline(always)]
+pub unsafe fn lcr3(val: usize) {
+    // Prevent compiler reordering
+    core::arch::asm!("", options(nostack, preserves_flags));
+    // Move the value into the CR3 register
+    core::arch::asm!(
+        "movq {0}, %cr3",
+        in(reg) val,
+        options(nostack, preserves_flags)
+    );
 }

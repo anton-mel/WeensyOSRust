@@ -78,9 +78,9 @@ endif
 
 BOOT_OBJS = $(OBJDIR)/bootstart.o $(OBJDIR)/boot.o
 
-KERNEL_OBJS = $(OBJDIR)/k-exception.o \
-              $(OBJDIR)/k-hardware.o $(OBJDIR)/vm.o
-KERNEL_OBJS_RUST = $(OBJDIR)/kloader.o $(OBJDIR)/kernel.o
+KERNEL_OBJS = $(OBJDIR)/k-exception.o $(OBJDIR)/vm.o \
+              $(OBJDIR)/k-hardware.o $(OBJDIR)/kernel.o
+KERNEL_OBJS_RUST = $(OBJDIR)/kloader.o
 KERNEL_LINKER_FILES = link/kernel.ld link/shared.ld
 
 PROCESS_BINARIES = $(OBJDIR)/p-allocator $(OBJDIR)/p-allocator2 \

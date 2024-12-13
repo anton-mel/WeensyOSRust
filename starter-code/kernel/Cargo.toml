@@ -4,6 +4,7 @@ members = [
     "kloader",
     "kernel", 
     "stdlib",
+    "vm",
 ]
 resolver = "2"
 

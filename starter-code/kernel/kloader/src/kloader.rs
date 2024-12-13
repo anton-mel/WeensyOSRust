@@ -8,17 +8,14 @@ use stdlib::my_assert;
 //    Load a weensy application into memory from a RAM image.
 
 extern "C" {
-    #[link(name = "k-hardware")] 
     pub fn c_panic(format: *const core::ffi::c_char, ...) -> !;
-    #[link(name = "kernel")] 
     pub fn assign_physical_page(addr: usize, owner: usize) -> i32;
-    #[link(name = "vm")] 
     pub fn set_pagetable(pagetable: *mut x86_64_pagetable);
-    #[link(name = "vm")] 
     pub fn virtual_memory_map(pagetable: *mut x86_64_pagetable, vaddr: usize, paddr: usize, size: usize, flags: u32) -> core::ffi::c_int;
     pub fn memcpy(dst: *mut core::ffi::c_void, src: *const core::ffi::c_void, n: usize) -> *mut ::std::os::raw::c_void;
     pub fn memset(s: *mut core::ffi::c_void, c: core::ffi::c_int, n: core::ffi::c_ulong) -> *mut core::ffi::c_void;
-    static kernel_pagetable: *mut x86_64_pagetable;
+    
+    pub static mut kernel_pagetable: *mut x86_64_pagetable;
 
     pub static _binary_obj_p_allocator_start: u8;
     pub static _binary_obj_p_allocator_end: u8;
@@ -132,7 +129,6 @@ pub unsafe extern "C" fn program_load_segment(
                 c_panic(
                     "(program_load_segment) can't assign address!".as_ptr() as *const core::ffi::c_char
                 );
-                return -1;
             }
             va += PAGESIZE;
         }
