@@ -1,12 +1,25 @@
 use crate::*;
 use core::ffi::c_void;
 use core::ffi::c_int;
+use stdlib::my_assert;
 
 // k-loader.c
 //
 //    Load a weensy application into memory from a RAM image.
 
 extern "C" {
+    #[link(name = "k-hardware")] 
+    pub fn c_panic(format: *const core::ffi::c_char, ...) -> !;
+    #[link(name = "kernel")] 
+    pub fn assign_physical_page(addr: usize, owner: usize) -> i32;
+    #[link(name = "vm")] 
+    pub fn set_pagetable(pagetable: *mut x86_64_pagetable);
+    #[link(name = "vm")] 
+    pub fn virtual_memory_map(pagetable: *mut x86_64_pagetable, vaddr: usize, paddr: usize, size: usize, flags: u32) -> core::ffi::c_int;
+    pub fn memcpy(dst: *mut core::ffi::c_void, src: *const core::ffi::c_void, n: usize) -> *mut ::std::os::raw::c_void;
+    pub fn memset(s: *mut core::ffi::c_void, c: core::ffi::c_int, n: core::ffi::c_ulong) -> *mut core::ffi::c_void;
+    static kernel_pagetable: *mut x86_64_pagetable;
+
     pub static _binary_obj_p_allocator_start: u8;
     pub static _binary_obj_p_allocator_end: u8;
     pub static _binary_obj_p_allocator2_start: u8;
@@ -55,35 +68,35 @@ pub unsafe extern "C" fn program_load(
 ) -> i32 {
     // is this a valid program?
     let n_programs = RAMIMAGES.len();
-    // assert!(programnumber < n_programs);
+    my_assert!(programnumber < n_programs);
+    let ram_image = &RAMIMAGES[programnumber];
+    let eh_ptr = ram_image.begin as *const u8;
+    let eh: &ElfHeader = unsafe { 
+        &*(eh_ptr as *const ElfHeader) 
+    };
+    my_assert!(eh.e_magic == ELF_MAGIC);
 
-    // // Get the ElfHeader from the RAM image at the specified program_number
-    // let ram_image = &RAMIMAGES[programnumber];
-    // let eh_ptr = ram_image.begin as *const u8; // Pointer to the start of the image
-    // let eh: &ElfHeader = unsafe { &*(eh_ptr as *const ElfHeader) }; // Cast to ElfHeader
-    // assert!(eh.e_magic == ELF_MAGIC);
+    // load each loadable program segment into memory
+    let ph: &[ElfProgram] = unsafe {
+        let program_header_ptr = (eh as *const ElfHeader as *const u8).add(eh.e_phoff as usize);
+        let program_array = program_header_ptr as *const ElfProgram;
+        core::slice::from_raw_parts(program_array, eh.e_phnum as usize)
+    };
+    
+    for i in 0..eh.e_phnum as usize {
+        if ph[i].p_type == ELF_PTYPE_LOAD {
+            let pdata = unsafe {
+                (eh as *const ElfHeader as *const u8).offset(ph[i].p_offset as isize)
+            };
 
-    // // Load each loadable program segment into memory
-    // let ph: &mut [ElfProgram] = unsafe {
-    //     let program_header_ptr = (eh as *const ElfHeader as *const u8).offset(eh.e_phoff as isize);
-    //     &mut *(program_header_ptr as *mut [ElfProgram; 10]) // Adjust array size as necessary
-    // };
+            if program_load_segment(p, &ph[i], pdata, allocator) < 0 {
+                return -1;
+            }
+        }
+    }
 
-    // // Return to this solution later on
-    // for i in 0..eh.e_phnum as usize {
-    //     if ph[i].p_type == ELF_PTYPE_LOAD {
-    //         let pdata = unsafe {
-    //             (eh as *const ElfHeader as *const u8).offset(ph[i].p_offset as isize)
-    //         };
-
-    //         if program_load_segment(p, &ph[i], pdata, allocator) < 0 {
-    //             return -1; // Return failure code if segment load fails
-    //         }
-    //     }
-    // }
-
-    // // set the entry point from the ELF header
-    // (*p).p_registers.reg_rip = eh.e_entry;
+    // set the entry point from the ELF header
+    (*p).p_registers.reg_rip = eh.e_entry;
     0 // Success (Required by C-kernel)
 }
 
@@ -98,7 +111,7 @@ pub unsafe extern "C" fn program_load(
 pub unsafe extern "C" fn program_load_segment(
     p: *mut Proc,
     ph: *const ElfProgram,
-    _src: *const u8,
+    src: *const u8,
     _allocator: extern "C" fn() -> *mut c_void,
 ) -> c_int {
     if p.is_null() || ph.is_null() {
@@ -111,34 +124,30 @@ pub unsafe extern "C" fn program_load_segment(
     va &= !(PAGESIZE - 1);       // round to page boundary
 
     // allocate memory
-    while va < end_mem {
-        // Note: First, implement kernel crate
-        // if assign_physical_page(va, (*p).p_pid) < 0
-        //     || virtual_memory_map((*p).p_pagetable, va, va, PAGESIZE, PTE_P | PTE_W | PTE_U) < 0
-        // {
-        //     eprintln!(
-        //         "program_load_segment(pid {}): can't assign address {:#x}",
-        //         (*p).p_pid,
-        //         va
-        //     );
-        //     return -1;
-        // }
-        va += PAGESIZE;
+    unsafe {
+        while va < end_mem {
+            if assign_physical_page(va as usize, (*p).p_pid as usize) < 0
+                || virtual_memory_map((*p).p_pagetable, va as usize, va as usize, PAGESIZE as usize, (PTE_P | PTE_W | PTE_U) as u32) < 0
+            {
+                c_panic(
+                    "(program_load_segment) can't assign address!".as_ptr() as *const core::ffi::c_char
+                );
+                return -1;
+            }
+            va += PAGESIZE;
+        }
     }
 
-    // Note: First, implement vm crate
-    // Ensure new memory mappings are active
-    // set_pagetable((*p).p_pagetable);
+    // ensure new memory mappings are active
+    set_pagetable((*p).p_pagetable);
 
-    // Copy data from the source to the destination in memory
-    // let dst = (*ph).p_va as *mut c_void;
-    // memcpy(dst, src as *const c_void, (*ph).p_filesz as size_t);
+    // copy data from the source to the destination in memory
+    let dst = (*ph).p_va as *mut c_void;
+    memcpy(dst, src as *const c_void, (*ph).p_filesz as usize);
+    let clear_start = (dst as usize + (*ph).p_filesz as usize) as *mut c_void;
+    memset(clear_start, 0, ((*ph).p_memsz - (*ph).p_filesz) as u64);
 
-    // Zero out remaining memory
-    // let clear_start = (dst as usize + (*ph).p_filesz) as *mut c_void;
-    // memset(clear_start, 0, ((*ph).p_memsz - (*ph).p_filesz) as size_t);
-
-    // Restore the kernel pagetable
-    // set_pagetable(core::ptr::null_mut());
+    // eestore the kernel pagetable
+    set_pagetable(kernel_pagetable);
     0 // Success
 }

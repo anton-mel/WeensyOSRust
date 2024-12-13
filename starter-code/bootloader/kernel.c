@@ -292,7 +292,7 @@ void exception(x86_64_registers* reg) {
                 ? "protection problem" : "missing page";
 
         if (!(reg->reg_err & PFERR_USER)) {
-            panic("Kernel page fault for %p (%s %s, rip=%p)!\n",
+            c_panic("Kernel page fault for %p (%s %s, rip=%p)!\n",
                   addr, operation, problem, reg->reg_rip);
         }
         console_printf(CPOS(24, 0), 0x0C00,

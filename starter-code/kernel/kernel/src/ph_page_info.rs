@@ -54,7 +54,8 @@ impl PhysicalPageInfoTable {
 
     pub fn pageinfo_init(&mut self) {
         extern "C" {
-            #[link(name = "k-hardware")] fn physical_memory_isreserved(pa: usize) -> ::core::ffi::c_int;
+            #[link(name = "k-hardware")] 
+            fn physical_memory_isreserved(pa: usize) -> core::ffi::c_int;
             static mut start_data: u8;
             static mut end: u8;
         }
@@ -76,5 +77,11 @@ impl PhysicalPageInfoTable {
                 page.refcount = if owner != PageOwner::PoFree { 1 } else { 0 };
             }
         }
+    }
+
+    // get_current_process_mut
+    //    Returns a mutable reference to the pid process. 
+    pub fn get_page_info_ref(&mut self, pn: usize) -> Option<&mut PhysicalPageInfo> {
+        self.pageinfo.get_mut(pn)
     }
 }

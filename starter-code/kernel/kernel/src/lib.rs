@@ -3,6 +3,7 @@
 
 mod kernel;
 mod process;
+mod memshow;
 mod ph_page_info;
 
 use crate::kernel::Kernel;
@@ -11,7 +12,7 @@ use core::ffi::c_char;
 use core::ptr;
 
 unsafe extern "C" {
-    #[link(name = "vm")] fn virtual_memory_map(pagetable: *mut x86_64_pagetable, vaddr: usize, paddr: usize, size: usize, flags: u32);
+    #[link(name = "vm")] fn virtual_memory_map(pagetable: *mut x86_64_pagetable, vaddr: usize, paddr: usize, size: usize, flags: u32) -> core::ffi::c_int;
     #[link(name = "k-hardware")] fn hardware_init();
     #[link(name = "bindings_lib")] fn console_clear();
     unsafe fn timer_init(hz: u32);
@@ -70,4 +71,33 @@ pub unsafe extern "C" fn process_setup(pid: usize, program_number: usize) -> i32
     // }
     // unlock();
     0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn exception(reg: &mut x86_64_registers) {
+    lock(); // Acquire the lock before accessing the kernel
+    if KERNEL.is_none() {
+        KERNEL = Some(Kernel::new());
+    }
+
+    if let Some(kernel) = &mut KERNEL {
+        kernel.exception(reg);
+    }
+    unlock(); // Release the lock after use
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn assign_physical_page(addr: usize, owner: usize) -> i32 {
+    let mut output = -1; // Default value or error code
+    lock(); // Acquire the lock before accessing the kernel
+    if KERNEL.is_none() {
+        KERNEL = Some(Kernel::new());
+    }
+
+    if let Some(kernel) = &mut KERNEL {
+        output = kernel.assign_physical_page(addr, owner);
+    }
+
+    unlock(); // Release the lock after use
+    return output;
 }

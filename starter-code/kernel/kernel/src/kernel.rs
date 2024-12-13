@@ -1,16 +1,32 @@
 use bindings::bindings_x86_64::*;
 use bindings::bindings_kernel::*;
+use bindings::bindings_lib::*;
+
+use crate::memshow::memshow_physical;
+use crate::memshow::memshow_virtual_animate;
 
 use crate::process::ProcessTable;
 use crate::ph_page_info::PhysicalPageInfoTable;
+use crate::ph_page_info::PageOwner;
+
+use stdlib::*;
+
+use core::sync::atomic::{
+    AtomicU32,
+    AtomicU8,
+    Ordering
+};
 
 // kernel.c
 //
 //    This is the kernel.
 
 unsafe extern "C" {
-    #[link(name = "vm")] fn virtual_memory_map(pagetable: *mut x86_64_pagetable, vaddr: usize, paddr: usize, size: usize, flags: u32);
+    #[link(name = "vm")] fn set_pagetable(pagetable: *mut x86_64_pagetable);
+    #[link(name = "vm")] fn virtual_memory_map(pagetable: *mut x86_64_pagetable, vaddr: usize, paddr: usize, size: usize, flags: u32) -> core::ffi::c_int;
     #[link(name = "vm")] fn virtual_memory_lookup(pagetable: *mut x86_64_pagetable, va: usize) -> VAMapping;
+    #[link(name = "k-hardware")] pub fn c_panic(format: *const core::ffi::c_char, ...) -> !;
+    static kernel_pagetable: *mut x86_64_pagetable;
 }
 
 // INITIAL PHYSICAL MEMORY LAYOUT
@@ -29,10 +45,11 @@ unsafe extern "C" {
 const PROC_SIZE: usize = 0x40000; // initial state only
 
 const HZ: u32 = 100;                // timer interrupt frequency (interrupts/sec)
-static mut TICKS: u32 = 0;          // # timer interrupts so far
+static TICKS: AtomicU32 =           // # timer interrupts so far
+    AtomicU32::new(0);              // AtomicU32 for thread-safe mutable static
 
-static mut DISP_GLOBAL: u8 = 1;     // global flag to display memviewer
-
+static DISP_GLOBAL: AtomicU8 =      // global flag to display memviewer
+    AtomicU8::new(1);               // AtomicU8 for thread-safe mutable static
 
 pub struct Kernel {
     proc_table: ProcessTable,
@@ -94,7 +111,10 @@ impl Kernel {
     pub fn process_setup(&mut self, pid: usize, program_number: usize) {
         let mut p = self.proc_table.process_setup(pid, program_number);
         unsafe { // increase refcount since kernel_pagetable was used
-            // pageinfo[PAGENUMBER(kernel_pagetable);].refcount += 1;
+            let pn = page_number(kernel_pagetable as *const u8);
+            if let Some(page_info) = self.pageinfo_table.get_page_info_ref(pn) {
+                page_info.refcount += 1;
+            }
         }
         p.p_registers.reg_rsp = PROC_START_ADDR + (PROC_SIZE * pid) as u64;
         let stack_page = p.p_registers.reg_rsp - PAGESIZE;
@@ -127,6 +147,290 @@ impl Kernel {
         self.pageinfo_table.pageinfo[pn].owner = owner as i8;
         self.pageinfo_table.pageinfo[pn].refcount = 1;
         0
+    }
+
+    // check_page_table_mappings
+    //    Check operating system invariants about kernel mappings for page
+    //    table `pt`. Panic if any of the invariants are false.
+
+    pub fn check_page_table_mappings(&self, pt: *mut x86_64_pagetable) {
+        extern "C" {
+            static mut start_data: u8;
+            static mut end: u8;
+            pub fn console_printf(
+                cpos: i32,
+                color: i32,
+                format: *const u8,
+                ...
+            ) -> i32;
+        }
+
+        unsafe {
+            let start_data_addr = &start_data as *const u8 as u64;
+            let end_addr = &end as *const u8 as u64;
+
+            for va in (KERNEL_START_ADDR..end_addr).step_by(PAGESIZE as usize) {
+                let vam = virtual_memory_lookup(pt, va as usize);
+                let vam_pa = vam.pa;
+                let vam_perm = vam.perm;
+
+                if vam_pa != va as usize {
+                    let fmt = b"{:p} vs {:p}\0" as *const u8;
+                    console_printf(22, 0, 0xC000 as *const u8,
+                        fmt, va as *const u8, vam_pa as *const u8);
+                }
+                
+                // FIX: my_assert! fails on multiple definitions
+                if !(vam_pa == va as usize) {
+                    c_panic("Assertion failed: vam_pa == va as usize".as_ptr() as *const i8);
+                }
+                if va >= start_data_addr {
+                    if !(vam_perm & PTE_W as i32 != 0) {
+                        c_panic("Assertion failed: vam_perm & PTE_W as i32 != 0".as_ptr() as *const i8);
+                    }
+                }
+            }
+
+            let kstack = KERNEL_STACK_TOP - PAGESIZE;
+            let vam = virtual_memory_lookup(pt, kstack as usize);
+            let vam_pa = vam.pa;
+            let vam_perm = vam.perm;
+
+            // FIX: my_assert! fails on multiple definitions
+            if !(vam_pa == kstack as usize) {
+                c_panic("Assertion failed: vam_pa == kstack as usize".as_ptr() as *const i8);
+            }
+            if !(vam_perm & PTE_W as i32 != 0) {
+                c_panic("Assertion failed: vam_perm & PTE_W as i32 != 0".as_ptr() as *const i8);
+            }
+        }
+    }
+
+    // check_page_table_ownership
+    //    Check operating system invariants about ownership and reference
+    //    counts for page table `pt`. Panic if any of the invariants are false.
+
+    pub fn check_page_table_ownership(&self, pt: *mut x86_64_pagetable, pid: i32) {
+        unsafe {
+            let mut owner = pid;
+            let mut expected_refcount = 1;
+
+            if pt == kernel_pagetable {
+                owner = PageOwner::PoKernel as i32;
+                for proc in self.proc_table.processes.iter() {
+                    if proc.p_state != P_FREE && proc.p_pagetable == kernel_pagetable {
+                        expected_refcount += 1;
+                    }
+                }
+            }
+
+            self.check_page_table_ownership_level(pt, 0, owner, expected_refcount);
+        }
+    }
+
+    pub fn check_page_table_ownership_level(&self, pt: *mut x86_64_pagetable, level: usize, owner: i32, refcount: u32) {
+        unsafe {
+            let page_number = (pt as usize) / PAGESIZE as usize;
+            my_assert!(page_number < NPAGES as usize);
+            my_assert!(self.pageinfo_table.pageinfo[page_number].owner == owner as i8);
+            my_assert!(self.pageinfo_table.pageinfo[page_number].refcount == refcount as i8);
+
+            if level < 3 {
+                for &entry in &(*pt).entry {
+                    if entry != 0 {
+                        let next_pt = (entry & !0xFFF) as *mut x86_64_pagetable;
+                        self.check_page_table_ownership_level(next_pt, level + 1, owner, 1);
+                    }
+                }
+            }
+        }
+    }
+
+    // check_virtual_memory
+    //    Check operating system invariants about virtual memory. Panic if any
+    //    of the invariants are false.
+
+    pub fn check_virtual_memory(&self) {
+        unsafe {
+            my_assert!(self.proc_table.processes[0].p_state == P_FREE);
+
+            self.check_page_table_mappings(kernel_pagetable);
+            // self.check_page_table_ownership(kernel_pagetable, -1);
+
+            // for proc in self.proc_table.processes.iter() {
+            //     if proc.p_state != P_FREE && proc.p_pagetable != kernel_pagetable {
+            //         self.check_page_table_mappings(proc.p_pagetable);
+            //         self.check_page_table_ownership(proc.p_pagetable, proc.p_pagetable as i32);
+            //     }
+            // }
+
+            // for (pn, page) in self.pageinfo_table.pageinfo.iter().enumerate() {
+            //     if page.refcount > 0 && page.owner >= 0 {
+            //         my_assert!(self.proc_table.processes[page.owner as usize].p_state != P_FREE);
+            //     }
+            // }
+        }
+    }
+
+    // exception(reg)
+    //    Exception handler (for interrupts, traps, and faults).
+    //
+    //    The register values from exception time are stored in `reg`.
+    //    The processor responds to an exception by saving application state on
+    //    the kernel's stack, then jumping to kernel assembly code (in
+    //    k-exception.S). That code saves more registers on the kernel's stack,
+    //    then calls exception().
+    //
+    //    Note that hardware interrupts are disabled whenever the kernel is running.
+
+    #[allow(non_snake_case)]
+    pub fn exception(&mut self, reg: &mut x86_64_registers) {
+        unsafe extern "C" {
+            #[link(name = "k-hardware")]
+            fn check_keyboard() -> core::ffi::c_int;
+            fn console_show_cursor(cpos: core::ffi::c_int);
+            fn default_exception(p: *mut Proc);
+            fn memcpy(
+                dst: *mut core::ffi::c_void,
+                src: *const core::ffi::c_void,
+                n: usize,
+            ) -> *mut ::std::os::raw::c_void;
+            pub fn console_printf(
+                cpos: i32,
+                color: i32,
+                format: *const u8,
+                ...
+            ) -> i32;
+        }
+        
+        // Copy the saved registers into the `current` process descriptor
+        // and always use the kernel's page table.
+        self.proc_table.exception(reg);
+        unsafe { set_pagetable(kernel_pagetable); }
+
+        // It can be useful to log events using `log_printf`.
+        // Events logged this way are stored in the host's `log.txt` file.
+        /*log_printf("proc %d: exception %d\n", current->p_pid, reg->reg_intno);*/
+
+        // Show the current cursor location and memory state
+        // (unless this is a kernel fault).
+        unsafe { console_show_cursor(cursorpos); }
+        if (reg.reg_intno != INT_PAGEFAULT as u64 && reg.reg_intno != INT_GPF as u64) // no error due to pagefault or general fault
+            || (reg.reg_err & PFERR_USER as u64) != 0 // pagefault error in user mode
+        {
+            self.check_virtual_memory();
+            if DISP_GLOBAL.load(Ordering::SeqCst) != 0 {
+                unsafe{ memshow_physical(); }
+                unsafe{ memshow_virtual_animate(); }
+            }
+        }
+
+        // If Control-C was typed, exit the virtual machine.
+        unsafe { check_keyboard(); }
+
+        let curr_proc = self.proc_table.get_current_process();
+        // Handle the exception based on the interrupt number.
+        match reg.reg_intno as u32 {
+            INT_SYS_PANIC => {
+                // rdi stores pointer for msg string
+                let addr = curr_proc.p_registers.reg_rdi;
+                if addr == 0 {
+                    unsafe {
+                        c_panic("(exception) current process has not been set yet".as_ptr() as *const core::ffi::c_char);
+                    }
+                } else {
+                    unsafe {
+                        let map = virtual_memory_lookup(curr_proc.p_pagetable, addr as usize);
+                        let mut msg = [0u8; 160];
+                        memcpy(
+                            &mut msg as *mut [u8; 160] as *mut core::ffi::c_void, 
+                            map.pa as *const core::ffi::c_void, 
+                            160
+                        );
+                        c_panic(msg.as_ptr() as *const i8);
+                        /* will not be reached */
+                    }
+                }
+            }
+            INT_SYS_GETPID => {
+                self.proc_table.set_register_rax(curr_proc.p_pid as u64);              
+            }
+            INT_SYS_YIELD => {
+                self.proc_table.schedule();
+                /* will not be reached */
+            }
+            INT_SYS_PAGE_ALLOC => {
+                let addr = curr_proc.p_registers.reg_rdi;
+                let r = self.assign_physical_page(
+                    addr as usize, 
+                    curr_proc.p_pid as usize,
+                );
+                if r >= 0 {
+                    unsafe { 
+                        virtual_memory_map(
+                            curr_proc.p_pagetable, 
+                            addr as usize,
+                            addr as usize,
+                            PAGESIZE as usize,
+                            (PTE_P | PTE_W | PTE_U) as u32,
+                        );
+                    }
+                }
+                self.proc_table.set_register_rax(r as u64);
+            }
+            INT_SYS_MAPPING => {
+                unsafe {
+                    let mut current = self.proc_table.get_current_process_mut();
+                    syscall_mapping(&mut *current);
+                }
+            }
+            INT_SYS_MEM_TOG => {
+                unsafe {
+                    let mut current = self.proc_table.get_current_process_mut();
+                    syscall_mem_tog(&mut *current);
+                }
+            }
+            INT_TIMER => {
+                TICKS.fetch_add(1, Ordering::SeqCst);
+                self.proc_table.schedule();
+                /* will not be reached */
+            }
+            INT_PAGEFAULT => {
+                let mut current = self.proc_table.get_current_process_mut();
+                // Analyze faulting address and access type.
+                let addr = unsafe { rcr2() };
+                let operation = if reg.reg_err & PFERR_WRITE as u64 != 0 { "write" } else { "read" };
+                let problem = if reg.reg_err & PFERR_PRESENT as u64 != 0 { "protection problem" } else { "missing page" };
+
+                if reg.reg_err & PFERR_USER as u64 == 0 {
+                    unsafe {
+                        c_panic("Kernel page fault!".as_ptr() as *const core::ffi::c_char);
+                    }
+                }
+                unsafe {
+                    console_printf(
+                        cpos!(24, 0), 
+                        0x0C00, 
+                        "Process page faule!".as_ptr() as *const u8,
+                    );
+                }
+                current.p_state = P_BROKEN;
+            }
+            _ => {
+                unsafe {
+                    let mut current = self.proc_table.get_current_process_mut();
+                    default_exception(&mut *current);
+                    /* will not be reached */
+                }
+            }
+        }
+
+        // Return to the current process (or run something else).
+        if curr_proc.p_state == P_RUNNABLE {
+            self.proc_table.run(curr_proc.p_pid as usize);
+        } else {
+            self.proc_table.schedule();
+        }
     }
 }
 
@@ -172,7 +476,7 @@ pub unsafe extern "C" fn syscall_mem_tog(process: &mut Proc) {
 
     if p == 0 {
         unsafe {
-            DISP_GLOBAL = !DISP_GLOBAL;
+            DISP_GLOBAL.fetch_xor(1, Ordering::SeqCst);
         }
     } else {
         if p < 0 || p > NPROC as i32 || p != process.p_pid {
@@ -180,344 +484,4 @@ pub unsafe extern "C" fn syscall_mem_tog(process: &mut Proc) {
         }
         process.display_status = !process.display_status;
     }
-}
-
-// exception(reg)
-//    Exception handler (for interrupts, traps, and faults).
-//
-//    The register values from exception time are stored in `reg`.
-//    The processor responds to an exception by saving application state on
-//    the kernel's stack, then jumping to kernel assembly code (in
-//    k-exception.S). That code saves more registers on the kernel's stack,
-//    then calls exception().
-//
-//    Note that hardware interrupts are disabled whenever the kernel is running.
-
-#[no_mangle]
-pub unsafe extern "C" fn exception(reg: &mut x86_64_registers) {
-    // unsafe {
-    //     if let Some(current) = CURRENT.as_mut() {
-    //         current.p_registers = *reg;
-    //         set_pagetable(kernel_pagetable);
-    //         console_show_cursor(cursorpos);
-
-    //         if reg.reg_intno != INT_PAGEFAULT && reg.reg_intno != INT_GPF
-    //             || (reg.reg_err & PFERR_USER) != 0
-    //         {
-    //             check_virtual_memory();
-    //             if DISP_GLOBAL != 0 {
-    //                 memshow_physical();
-    //                 memshow_virtual_animate();
-    //             }
-    //         }
-
-    //         check_keyboard();
-
-    //         // Handling different exceptions
-    //         match reg.reg_intno {
-    //             INT_SYS_PANIC => {
-    //                 let msg_addr = current.p_registers.reg_rdi;
-    //                 if msg_addr == 0 {
-    //                     panic!("Panic triggered: NULL message");
-    //                 }
-    //                 let map = virtual_memory_lookup(current.p_pagetable, msg_addr);
-    //                 let mut msg = [0u8; 160];
-    //                 memcpy(&mut msg, map.pa as *const u8, 160);
-    //                 panic!("{}", String::from_utf8_lossy(&msg));
-    //             }
-    //             INT_SYS_GETPID => {
-    //                 current.p_registers.reg_rax = current.p_pid;
-    //             }
-    //             INT_SYS_YIELD => schedule(),
-    //             INT_SYS_PAGE_ALLOC => {
-    //                 let addr = current.p_registers.reg_rdi;
-    //                 if assign_physical_page(addr, current.p_pid) >= 0 {
-    //                     virtual_memory_map(
-    //                         current.p_pagetable,
-    //                         addr,
-    //                         addr,
-    //                         PAGESIZE,
-    //                         PTE_P | PTE_W | PTE_U,
-    //                     );
-    //                 }
-    //             }
-    //             _ => {}
-    //         }
-    //     }
-    // }
-}
-
-
-// schedule
-//    Pick the next process to run and then run it.
-//    If there are no runnable processes, spins forever.
-
-#[no_mangle]
-pub unsafe extern "C" fn schedule() {
-    // let mut pid: usize;
-    // unsafe {
-    //     pid = (*CURRENT.load(Ordering::SeqCst)).p_pid;
-    //     loop {
-    //         pid = (pid + 1) % NPROC;
-    //         if PROCESSES[pid].p_state == ProcessState::P_RUNNABLE {
-    //             run(&mut PROCESSES[pid]);
-    //         }
-    //         check_keyboard();
-    //     }
-    // }
-}
-
-
-#[no_mangle]
-pub unsafe extern "C" fn run(p: &mut Proc) {
-    // assert_eq!(p.p_state, ProcessState::P_RUNNABLE);
-    // unsafe {
-    //     CURRENT.store(p, Ordering::SeqCst);
-    // }
-    // set_pagetable(p.p_pagetable);
-    // exception_return(&p.p_registers);
-
-    loop {
-        // Spinloop
-        // should never get here
-    }
-}
-
-
-// pageinfo_init
-//    Initialize the `pageinfo[]` array.
-
-#[no_mangle]
-pub unsafe extern "C" fn pageinfo_init() {
-    
-}
-
-
-// check_page_table_mappings
-//    Check operating system invariants about kernel mappings for page
-//    table `pt`. Panic if any of the invariants are false.
-
-#[no_mangle]
-pub unsafe extern "C" fn check_page_table_mappings(pt: *mut x86_64_pagetable) {
-    // extern "C" {
-    //     static mut start_data: u8;
-    //     static mut end: u8;
-    // }
-
-    // unsafe {
-    //     let start_data = &start_data as *const u8 as usize;
-    //     let end = &end as *const u8 as usize;
-
-    //     for va in (KERNEL_START_ADDR..end).step_by(PAGESIZE) {
-    //         let vam = virtual_memory_lookup(pt, va);
-    //         if vam.pa != va {
-    //             console_printf(22, 0, 0xC000, "{:p} vs {:p}", va as *const u8, vam.pa as *const u8);
-    //         }
-    //         assert_eq!(vam.pa, va);
-    //         if va >= start_data {
-    //             assert!(vam.perm & PTE_W != 0);
-    //         }
-    //     }
-
-    //     let kstack = KERNEL_STACK_TOP - PAGESIZE;
-    //     let vam = virtual_memory_lookup(pt, kstack);
-    //     assert_eq!(vam.pa, kstack);
-    //     assert!(vam.perm & PTE_W != 0);
-    // }
-}
-
-
-// check_page_table_ownership
-//    Check operating system invariants about ownership and reference
-//    counts for page table `pt`. Panic if any of the invariants are false.
-
-#[no_mangle]
-pub unsafe extern "C" fn check_page_table_ownership(pt: *mut x86_64_pagetable, pid: i32) {
-    // unsafe {
-    //     let mut owner = pid;
-    //     let mut expected_refcount = 1;
-
-    //     if pt == KERNEL_PAGETABLE {
-    //         owner = PO_KERNEL;
-    //         for proc in PROCESSES.iter() {
-    //             if proc.p_state != ProcessState::P_FREE && proc.p_pagetable == KERNEL_PAGETABLE {
-    //                 expected_refcount += 1;
-    //             }
-    //         }
-    //     }
-
-    //     check_page_table_ownership_level(pt, 0, owner, expected_refcount);
-    // }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn check_page_table_ownership_level(pt: *mut x86_64_pagetable, level: usize, owner: i32, refcount: u32) {
-    // unsafe {
-    //     let page_number = (pt as usize) / PAGESIZE;
-    //     assert!(page_number < NPAGES);
-    //     assert_eq!(PAGEINFO[page_number].owner, owner);
-    //     assert_eq!(PAGEINFO[page_number].refcount, refcount);
-
-    //     if level < 3 {
-    //         for &entry in &(*pt).entry {
-    //             if entry != 0 {
-    //                 let next_pt = (entry & !0xFFF) as *mut PageTable;
-    //                 check_page_table_ownership_level(next_pt, level + 1, owner, 1);
-    //             }
-    //         }
-    //     }
-    // }
-}
-
-
-// check_virtual_memory
-//    Check operating system invariants about virtual memory. Panic if any
-//    of the invariants are false.
-
-#[no_mangle]
-pub unsafe extern "C" fn check_virtual_memory() {
-    // unsafe {
-    //     assert_eq!(PROCESSES[0].p_state, ProcessState::P_FREE);
-
-    //     check_page_table_mappings(KERNEL_PAGETABLE);
-    //     check_page_table_ownership(KERNEL_PAGETABLE, -1);
-
-    //     for proc in PROCESSES.iter() {
-    //         if proc.p_state != ProcessState::P_FREE && proc.p_pagetable != KERNEL_PAGETABLE {
-    //             check_page_table_mappings(proc.p_pagetable);
-    //             check_page_table_ownership(proc.p_pagetable, proc.p_pagetable as i32);
-    //         }
-    //     }
-
-    //     for (pn, page) in PAGEINFO.iter().enumerate() {
-    //         if page.refcount > 0 && page.owner >= 0 {
-    //             assert_ne!(PROCESSES[page.owner as usize].p_state, ProcessState::P_FREE);
-    //         }
-    //     }
-    // }
-}
-
-// memshow_physical
-//    Draw a picture of physical memory on the CGA console.
-
-const MEMSTATE_COLORS: [u16; 19] = [
-    b'K' as u16 | 0x0D00, b'R' as u16 | 0x0700, b'.' as u16 | 0x0700, b'1' as u16 | 0x0C00,
-    b'2' as u16 | 0x0A00, b'3' as u16 | 0x0900, b'4' as u16 | 0x0E00, b'5' as u16 | 0x0F00,
-    b'6' as u16 | 0x0C00, b'7' as u16 | 0x0A00, b'8' as u16 | 0x0900, b'9' as u16 | 0x0E00,
-    b'A' as u16 | 0x0F00, b'B' as u16 | 0x0C00, b'C' as u16 | 0x0A00, b'D' as u16 | 0x0900,
-    b'E' as u16 | 0x0E00, b'F' as u16 | 0x0F00, b'S' as u16,
-];
-const SHARED_COLOR: u16 = MEMSTATE_COLORS[18];
-
-#[no_mangle]
-pub unsafe extern "C" fn memshow_physical() {
-    // console_printf(CPOS(0, 32), 0x0F00, "PHYSICAL MEMORY");
-    // for pn in 0..PAGENUMBER(MEMSIZE_PHYSICAL) {
-    //     if pn % 64 == 0 {
-    //         console_printf(CPOS(1 + pn / 64, 3), 0x0F00, "0x{:06X} ", pn << 12);
-    //     }
-
-    //     let mut owner = pageinfo[pn].owner;
-    //     if pageinfo[pn].refcount == 0 {
-    //         owner = PO_FREE;
-    //     }
-    //     let mut color = MEMSTATE_COLORS[(owner - PO_KERNEL) as usize];
-
-    //     // Apply darker color for shared pages
-    //     if pageinfo[pn].refcount > 1 && pn != PAGENUMBER(CONSOLE_ADDR) {
-    //         #[cfg(feature = "shared")]
-    //         {
-    //             color = SHARED_COLOR | 0x0F00;
-    //         }
-    //         #[cfg(not(feature = "shared"))]
-    //         {
-    //             color &= 0x77FF;
-    //         }
-    //     }
-
-    //     console[CPOS(1 + pn / 64, 12 + pn % 64)] = color;
-    // }
-}
-
-
-// memshow_virtual(pagetable, name)
-//    Draw a picture of the virtual memory map `pagetable` (named `name`) on
-//    the CGA console.
-
-#[no_mangle]
-pub unsafe extern "C" fn memshow_virtual(pagetable: &x86_64_pagetable, name: *const u8) {
-    // assert_eq!(pagetable as *const _ as usize, PTE_ADDR(pagetable as *const _ as usize));
-
-    // console_printf(CPOS(10, 26), 0x0F00, "VIRTUAL ADDRESS SPACE FOR {}", name);
-    // for va in (0..MEMSIZE_VIRTUAL).step_by(PAGESIZE) {
-    //     let vam = virtual_memory_lookup(pagetable, va);
-    //     let color = if vam.pn < 0 {
-    //         b' ' as u16
-    //     } else {
-    //         assert!(vam.pa < MEMSIZE_PHYSICAL);
-    //         let mut owner = pageinfo[vam.pn].owner;
-    //         if pageinfo[vam.pn].refcount == 0 {
-    //             owner = PO_FREE;
-    //         }
-    //         let mut color = MEMSTATE_COLORS[(owner - PO_KERNEL) as usize];
-
-    //         // Apply reverse video for user-accessible pages
-    //         if vam.perm & PTE_U != 0 {
-    //             color = ((color & 0x0F00) << 4) | ((color & 0xF000) >> 4) | (color & 0x00FF);
-    //         }
-
-    //         // Apply darker color for shared pages
-    //         if pageinfo[vam.pn].refcount > 1 && va != CONSOLE_ADDR {
-    //             #[cfg(feature = "shared")]
-    //             {
-    //                 color = SHARED_COLOR | (color & 0xF000);
-    //                 if vam.perm & PTE_U == 0 {
-    //                     color |= 0x0F00;
-    //                 }
-    //             }
-    //             #[cfg(not(feature = "shared"))]
-    //             {
-    //                 color &= 0x77FF;
-    //             }
-    //         }
-    //         color
-    //     };
-
-    //     let pn = PAGENUMBER(va);
-    //     if pn % 64 == 0 {
-    //         console_printf(CPOS(11 + pn / 64, 3), 0x0F00, "0x{:06X} ", va);
-    //     }
-    //     console[CPOS(11 + pn / 64, 12 + pn % 64)] = color;
-    // }
-}
-
-
-// memshow_virtual_animate
-//    Draw a picture of process virtual memory maps on the CGA console.
-//    Starts with process 1, then switches to a new process every 0.25 sec.
-
-#[no_mangle]
-pub unsafe extern "C" fn memshow_virtual_animate() {
-    // static mut LAST_TICKS: u32 = 0;
-    // static mut SHOWING: usize = 1;
-
-    // unsafe {
-    //     if LAST_TICKS == 0 || ticks - LAST_TICKS >= HZ / 2 {
-    //         LAST_TICKS = ticks;
-    //         SHOWING += 1;
-    //     }
-
-    //     while SHOWING <= 2 * NPROC
-    //         && (processes[SHOWING % NPROC].p_state == P_FREE
-    //             || processes[SHOWING % NPROC].display_status == 0)
-    //     {
-    //         SHOWING += 1;
-    //     }
-    //     SHOWING %= NPROC;
-
-    //     if processes[SHOWING].p_state != P_FREE {
-    //         let name = format!("{} ", SHOWING);
-    //         memshow_virtual(&processes[SHOWING].p_pagetable, &name);
-    //     }
-    // }
 }

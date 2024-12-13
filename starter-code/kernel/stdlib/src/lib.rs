@@ -1,3 +1,5 @@
+#![allow(unused_macros)]
+
 // This file provides missing functionality for the Rust kernel
 // required to complete the pset as a dynamicly linked library.
 // It avoids th use of allocation and other OS features to keep
@@ -85,5 +87,32 @@ macro_rules! my_assert {
                 c_panic(MESSAGE.as_ptr() as *const core::ffi::c_char);
             }
         }
+    };
+}
+
+#[macro_export]
+// Macro to calculate the position in a 
+// 80-column display from row and column.
+macro_rules! cpos {
+    ($row:expr, $col:expr) => {
+        ($row) * 80 + ($col)
+    };
+}
+
+#[macro_export]
+// Macro to calculate the row from a given 
+// position in a 80-column display.
+macro_rules! crow {
+    ($cpos:expr) => {
+        ($cpos) / 80
+    };
+}
+
+#[macro_export]
+// Macro to calculate the column from a 
+// given position in a 80-column display.
+macro_rules! ccol {
+    ($cpos:expr) => {
+        ($cpos) % 80
     };
 }

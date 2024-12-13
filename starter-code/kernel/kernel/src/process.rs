@@ -14,7 +14,7 @@ unsafe extern "C" {
 
 pub struct ProcessTable {
     pub processes: [Proc; NPROC], // array of processes
-    current: Option<*mut Proc>,   // pointer to currently executing proc
+    pub current: Option<*mut Proc>,   // pointer to currently executing proc
 }
 
 impl ProcessTable {
@@ -96,5 +96,75 @@ impl ProcessTable {
                 c_panic("(schedule) No current process available.".as_ptr() as *const core::ffi::c_char);
             }
         }
-    }       
+    }
+    
+    // exception
+    //    Copy the saved registers into the `current` process descriptor
+    //    and set up the kernel's page table.
+    pub fn exception(&mut self, reg: &mut x86_64_registers) {
+        if let Some(current_proc_ptr) = self.current {
+            let current_proc = unsafe { &mut *current_proc_ptr };
+            current_proc.p_registers = *reg;
+            unsafe {
+                current_proc.p_pagetable = kernel_pagetable;
+            }
+        } else {
+            unsafe {
+                c_panic("(exception) No current process available.".as_ptr() as *const core::ffi::c_char);
+            }
+        }
+    }
+
+    // get_current_process
+    //    Returns a reference to the current process, if set. 
+    //    If not, triggers a panic.
+    pub fn get_current_process(&self) -> Proc {
+        match self.current {
+            Some(ptr) => unsafe {
+                if ptr.is_null() {
+                    unsafe {
+                        c_panic("(get_current_process) current process pointer is null.".as_ptr() as *const core::ffi::c_char);
+                    }
+                } else {
+                    *ptr
+                }
+            },
+            None => unsafe {
+                c_panic("(get_current_process) No current process available.".as_ptr() as *const core::ffi::c_char);
+            },
+        }
+    }
+
+    // get_current_process_mut
+    //    Returns a mutable reference to the current process, if set. 
+    //    If not, triggers a panic.
+    pub fn get_current_process_mut(&mut self) -> &mut Proc {
+        match self.current {
+            Some(ptr) => unsafe {
+                if ptr.is_null() {
+                    unsafe {
+                        c_panic("(get_current_process_mut) current process pointer is null.".as_ptr() as *const core::ffi::c_char);
+                    }
+                } else {
+                    &mut *ptr
+                }
+            },
+            None => unsafe {
+                c_panic("(get_current_process_mut) No current process available.".as_ptr() as *const core::ffi::c_char);
+            },
+        }
+    }
+
+    // set_register_rax
+    //    Helper function to safely set a register in the current process.
+    pub fn set_register_rax(&mut self, value: u64) {
+        if let Some(current_proc_ptr) = self.current {
+            let current_proc = unsafe { &mut *current_proc_ptr };
+            current_proc.p_registers.reg_rax = value;
+        } else {
+            unsafe {
+                c_panic("(set_register_rax) No current process available.".as_ptr() as *const core::ffi::c_char);
+            }
+        }
+    }
 }

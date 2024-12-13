@@ -7,6 +7,8 @@
 //   - Hardware structures: C structures and constants for initializing
 //     x86 hardware, including the interrupt descriptor table.
 
+use core::arch::asm;
+
 use crate::bindings_kernel::P_FREE;
 use crate::bindings_kernel::Procstate;
 
@@ -21,6 +23,10 @@ pub fn page_number(ptr: *const u8) -> usize {
     (ptr as usize) >> PAGEOFFBITS
 }
 
+pub fn pte_addr(pageentry: usize) -> usize {
+    pageentry & !0xFFF
+}
+
 // Page table entry flags
 pub const PTE_FLAGS: X86_64PageentryT = 0xFFF;
 // - Permission flags: define whether page is accessible
@@ -32,6 +38,12 @@ pub const PTE_A: X86_64PageentryT = 32;     // entry was Accessed (read/written)
 pub const PTE_D: X86_64PageentryT = 64;     // entry was Dirtied (written)
 pub const PTE_PS: X86_64PageentryT = 128;   // entry has a large Page Size
 // - There are other flags too!
+
+// Page fault error flags
+// These bits are stored in x86_registers::reg_err after a page fault trap.
+pub const PFERR_PRESENT: u8 = 0x1;   // Fault happened due to a protection violation (rather than due to a missing page)
+pub const PFERR_WRITE: u8 = 0x2;     // Fault happened on a write
+pub const PFERR_USER: u8 = 0x4;      // Fault happened in an application (user mode) (rather than kernel)
 
 #[repr(C)]
 #[repr(align(4096))]
@@ -147,4 +159,26 @@ pub struct VAMapping {
     pub pn: core::ffi::c_int,
     pub pa: usize,
     pub perm: core::ffi::c_int,
+}
+
+// Interrupt numbers
+pub const INT_DIVIDE: u32 = 0x0;        // Divide error
+pub const INT_DEBUG: u32 = 0x1;         // Debug exception
+pub const INT_BREAKPOINT: u32 = 0x3;    // Breakpoint
+pub const INT_OVERFLOW: u32 = 0x4;      // Overflow
+pub const INT_BOUNDS: u32 = 0x5;        // Bounds check
+pub const INT_INVALIDOP: u32 = 0x6;     // Invalid opcode
+pub const INT_DOUBLEFAULT: u32 = 0x8;   // Double fault
+pub const INT_INVALIDTSS: u32 = 0xa;    // Invalid TSS
+pub const INT_SEGMENT: u32 = 0xb;       // Segment not present
+pub const INT_STACK: u32 = 0xc;         // Stack exception
+pub const INT_GPF: u32 = 0xd;           // General protection fault
+pub const INT_PAGEFAULT: u32 = 0xe;     // Page fault
+
+
+#[inline(always)]
+pub unsafe fn rcr2() -> u64 {
+    let mut val: u64;
+    asm!("movq %%cr2, {0}", out(reg) val);
+    val
 }
