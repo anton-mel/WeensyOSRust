@@ -112,7 +112,6 @@ void kernel(const char* command) {
         }
     }
 
-
     // Switch to the first process using run()
     run(&processes[1]);
 }

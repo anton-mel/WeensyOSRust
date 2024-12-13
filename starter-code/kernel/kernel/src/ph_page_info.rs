@@ -55,13 +55,13 @@ impl PhysicalPageInfoTable {
     pub fn pageinfo_init(&mut self) {
         extern "C" {
             fn physical_memory_isreserved(pa: usize) -> core::ffi::c_int;
-            static mut end: u8;
+            static end: u8;
         }
-
-        unsafe {
-            let end_addr = &end as *const u8 as usize;
-            for addr in (0..MEMSIZE_PHYSICAL).step_by(PAGESIZE as usize) {
-                let owner = if physical_memory_isreserved(addr as usize) != 0 {
+    
+        let end_addr = unsafe { &end as *const u8 as usize };
+        for addr in (0..MEMSIZE_PHYSICAL).step_by(PAGESIZE as usize) {
+            let owner = unsafe {
+                if physical_memory_isreserved(addr as usize) != 0 {
                     PageOwner::PoReserved
                 } else if (addr >= KERNEL_START_ADDR && addr < end_addr as u64)
                     || addr == KERNEL_STACK_TOP - PAGESIZE
@@ -69,17 +69,28 @@ impl PhysicalPageInfoTable {
                     PageOwner::PoKernel
                 } else {
                     PageOwner::PoFree
-                };
-                let page = &mut self.pageinfo[(addr / PAGESIZE) as usize];
-                page.owner = owner.clone() as i8;
-                page.refcount = if owner != PageOwner::PoFree { 1 } else { 0 };
-            }
+                }
+            };
+    
+            let page = &mut self.pageinfo[(addr / PAGESIZE) as usize];
+            page.owner = owner.clone() as i8;
+            page.refcount = if owner != PageOwner::PoFree { 1 } else { 0 };
         }
     }
 
     // get_current_process_mut
     //    Returns a mutable reference to the pid process. 
-    pub fn get_page_info_ref(&mut self, pn: usize) -> Option<&mut PhysicalPageInfo> {
-        self.pageinfo.get_mut(pn)
-    }
+
+    pub fn get_page_info_ref(&mut self, pn: usize) -> &mut PhysicalPageInfo {
+        extern "C" {
+            fn c_panic(format: *const core::ffi::c_char, ...) -> !;
+        }
+
+        match self.pageinfo.get_mut(pn) {
+            Some(page_info) => page_info,
+            None => unsafe {
+                c_panic("(get_page_info_ref) page number out of bounds".as_ptr() as *const i8);
+            },
+        }
+    }    
 }

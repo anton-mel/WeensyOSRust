@@ -116,9 +116,8 @@ impl Kernel {
         let mut p = self.proc_table.process_setup(pid, program_number);
         unsafe { // increase refcount since kernel_pagetable was used
             let pn = page_number(kernel_pagetable as *const u8);
-            if let Some(page_info) = self.pageinfo_table.get_page_info_ref(pn) {
-                page_info.refcount += 1;
-            }
+            let page_info = self.pageinfo_table.get_page_info_ref(pn);
+            page_info.refcount += 1;
         }
         p.p_registers.reg_rsp = PROC_START_ADDR + (PROC_SIZE * pid) as u64;
         let stack_page = p.p_registers.reg_rsp - PAGESIZE;
@@ -237,12 +236,18 @@ impl Kernel {
     pub fn check_page_table_ownership_level(&self, pt: *mut x86_64_pagetable, level: usize, owner: i32, refcount: u32) {
         unsafe {
             let page_number = (pt as usize) / PAGESIZE as usize;
-            my_assert!(page_number < NPAGES as usize);
-            my_assert!(self.pageinfo_table.pageinfo[page_number].owner == owner as i8);
-            my_assert!(self.pageinfo_table.pageinfo[page_number].refcount == refcount as i8);
+            // FIX: my_assert! fails on multiple definitions
+            if !(page_number < NPAGES as usize) {
+                c_panic("Assertion failed: page_number < NPAGES as usize".as_ptr() as *const i8);
+            } else if !(self.pageinfo_table.pageinfo[page_number].owner == owner as i8) {
+                c_panic("Assertion failed: pageinfo[page_number].owner == owner".as_ptr() as *const i8);
+            } else if !(self.pageinfo_table.pageinfo[page_number].refcount == refcount as i8) {
+                c_panic("Assertion failed: pageinfo[page_number].refcount == refcount".as_ptr() as *const i8);
+            }
 
             if level < 3 {
-                for &entry in &(*pt).entry {
+                for index in 0..NPAGETABLEENTRIES {
+                    let entry = (*pt).entry[index as usize];
                     if entry != 0 {
                         let next_pt = (entry & !0xFFF) as *mut x86_64_pagetable;
                         self.check_page_table_ownership_level(next_pt, level + 1, owner, 1);
@@ -256,25 +261,32 @@ impl Kernel {
     //    Check operating system invariants about virtual memory. Panic if any
     //    of the invariants are false.
 
-    pub fn check_virtual_memory(&self) {
+    pub fn check_virtual_memory(&mut self) {
         unsafe {
-            my_assert!(self.proc_table.processes[0].p_state == P_FREE);
-
+            if !(self.proc_table.processes[0].p_state == P_FREE) {
+                c_panic("Assertion failed: processes[0].p_state == P_FREE".as_ptr() as *const i8);
+            }
+    
             self.check_page_table_mappings(kernel_pagetable);
-            // self.check_page_table_ownership(kernel_pagetable, -1);
-
-            // for proc in self.proc_table.processes.iter() {
-            //     if proc.p_state != P_FREE && proc.p_pagetable != kernel_pagetable {
-            //         self.check_page_table_mappings(proc.p_pagetable);
-            //         self.check_page_table_ownership(proc.p_pagetable, proc.p_pagetable as i32);
-            //     }
-            // }
-
-            // for (pn, page) in self.pageinfo_table.pageinfo.iter().enumerate() {
-            //     if page.refcount > 0 && page.owner >= 0 {
-            //         my_assert!(self.proc_table.processes[page.owner as usize].p_state != P_FREE);
-            //     }
-            // }
+            self.check_page_table_ownership(kernel_pagetable, -1);
+    
+            for pid in 0..NPROC {
+                let proc = &self.proc_table.processes[pid];
+                if proc.p_state != P_FREE && proc.p_pagetable != kernel_pagetable {
+                    self.check_page_table_mappings(proc.p_pagetable);
+                    self.check_page_table_ownership(proc.p_pagetable, pid as i32);
+                }
+            }
+    
+            for pn in 0..page_number(MEMSIZE_PHYSICAL as *const u8) {
+                let page = self.pageinfo_table.get_page_info_ref(pn);
+                if page.refcount > 0 && page.owner >= 0 {
+                    let p = self.proc_table.get_process_by_pid(page.owner as usize);
+                    if !(p.p_state != P_FREE) {
+                        c_panic("Assertion failed: processes[page.owner as usize].p_state != P_FREE".as_ptr() as *const i8);
+                    }
+                }
+            }
         }
     }
 

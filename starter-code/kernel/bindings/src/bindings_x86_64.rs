@@ -187,6 +187,8 @@ pub const INT_SYS_MEM_TOG: u32 = 56;
 pub const INT_SYS_BRK: u32 = 57;
 pub const INT_SYS_SBRK: u32 = 58;
 
+pub const NPAGETABLEENTRIES: u32 = 512;
+
 #[inline(always)]
 pub unsafe fn rcr2() -> u64 {
     let mut val: u64;
